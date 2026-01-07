@@ -1,0 +1,175 @@
+//! MITM certificate generation with caching
+
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::server::ResolvesServerCert;
+use rustls::sign::CertifiedKey;
+use rustls::ServerConfig;
+use std::sync::Arc;
+use std::time::Duration;
+
+use super::ca::CertificateAuthority;
+use super::cache::CertificateCache;
+use crate::error::Result;
+
+/// MITM certificate generator that creates and caches per-host certificates
+pub struct MitmCertificateGenerator {
+    ca: Arc<CertificateAuthority>,
+    cache: CertificateCache,
+}
+
+impl std::fmt::Debug for MitmCertificateGenerator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MitmCertificateGenerator")
+            .field("cache_size", &self.cache.len())
+            .finish()
+    }
+}
+
+impl MitmCertificateGenerator {
+    /// Create a new MITM certificate generator
+    pub fn new(ca: CertificateAuthority) -> Self {
+        Self {
+            ca: Arc::new(ca),
+            cache: CertificateCache::default(),
+        }
+    }
+
+    /// Create with custom cache settings
+    pub fn with_cache(ca: CertificateAuthority, cache_capacity: usize, cache_ttl: Duration) -> Self {
+        Self {
+            ca: Arc::new(ca),
+            cache: CertificateCache::new(cache_capacity, cache_ttl),
+        }
+    }
+
+    /// Get or generate a certificate for a hostname
+    pub fn get_cert_for_host(
+        &self,
+        hostname: &str,
+    ) -> Result<(CertificateDer<'static>, PrivateKeyDer<'static>)> {
+        // Check cache first
+        if let Some(cached) = self.cache.get(hostname) {
+            tracing::debug!(hostname = %hostname, "Using cached certificate");
+            return Ok(cached);
+        }
+
+        // Generate new certificate
+        tracing::debug!(hostname = %hostname, "Generating new certificate");
+        let (cert, key) = self.ca.generate_cert_for_host(hostname)?;
+
+        // Cache it
+        self.cache
+            .put(hostname.to_string(), cert.clone(), key.clone_key());
+
+        Ok((cert, key))
+    }
+
+    /// Create a rustls ServerConfig for a specific hostname
+    pub fn server_config_for_host(&self, hostname: &str) -> Result<ServerConfig> {
+        let (cert, key) = self.get_cert_for_host(hostname)?;
+        let ca_cert = self.ca.cert_der().clone();
+
+        // Build certificate chain: [host cert, CA cert]
+        let cert_chain = vec![cert, ca_cert];
+
+        let config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(cert_chain, key)
+            .map_err(|e| crate::error::Error::tls(format!("Failed to build server config: {}", e)))?;
+
+        Ok(config)
+    }
+
+    /// Get the CA certificate for client trust
+    pub fn ca_cert_der(&self) -> &CertificateDer<'static> {
+        self.ca.cert_der()
+    }
+
+    /// Get cache statistics
+    pub fn cache_size(&self) -> usize {
+        self.cache.len()
+    }
+}
+
+/// A certificate resolver that generates MITM certificates on demand
+#[derive(Debug)]
+pub struct MitmCertResolver {
+    generator: Arc<MitmCertificateGenerator>,
+    hostname: String,
+}
+
+impl MitmCertResolver {
+    pub fn new(generator: Arc<MitmCertificateGenerator>, hostname: String) -> Self {
+        Self { generator, hostname }
+    }
+}
+
+impl ResolvesServerCert for MitmCertResolver {
+    fn resolve(
+        &self,
+        _client_hello: rustls::server::ClientHello<'_>,
+    ) -> Option<Arc<CertifiedKey>> {
+        let (cert, key) = self.generator.get_cert_for_host(&self.hostname).ok()?;
+        let ca_cert = self.generator.ca_cert_der().clone();
+
+        let signing_key = rustls::crypto::aws_lc_rs::sign::any_supported_type(&key).ok()?;
+
+        Some(Arc::new(CertifiedKey::new(vec![cert, ca_cert], signing_key)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tls::ca::GeneratedCa;
+
+    fn create_test_generator() -> MitmCertificateGenerator {
+        let generated = GeneratedCa::generate().unwrap();
+        let ca = CertificateAuthority::from_pem(&generated.cert_pem, &generated.key_pem).unwrap();
+        MitmCertificateGenerator::new(ca)
+    }
+
+    #[test]
+    fn test_generate_cert() {
+        let gen = create_test_generator();
+        let (cert, key) = gen.get_cert_for_host("example.com").unwrap();
+
+        assert!(!cert.is_empty());
+        assert!(!key.secret_der().is_empty());
+    }
+
+    #[test]
+    fn test_cache_hit() {
+        let gen = create_test_generator();
+
+        // First call generates
+        let _ = gen.get_cert_for_host("example.com").unwrap();
+        assert_eq!(gen.cache_size(), 1);
+
+        // Second call should use cache
+        let _ = gen.get_cert_for_host("example.com").unwrap();
+        assert_eq!(gen.cache_size(), 1);
+    }
+
+    #[test]
+    fn test_different_hosts() {
+        let gen = create_test_generator();
+
+        let _ = gen.get_cert_for_host("one.com").unwrap();
+        let _ = gen.get_cert_for_host("two.com").unwrap();
+
+        assert_eq!(gen.cache_size(), 2);
+    }
+
+    #[test]
+    fn test_server_config() {
+        // Install crypto provider for test
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
+        let gen = create_test_generator();
+        let config = gen.server_config_for_host("example.com").unwrap();
+
+        // Verify we got a valid config
+        assert!(config.alpn_protocols.is_empty()); // Default has no ALPN
+    }
+}

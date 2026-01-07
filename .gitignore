@@ -1,0 +1,20 @@
+# Rust build artifacts
+/target/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Certificates (generated during testing or usage)
+*.crt
+*.key
+*.pem
+
+# Logs
+*.log

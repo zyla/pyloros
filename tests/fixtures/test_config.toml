@@ -1,0 +1,25 @@
+# Test configuration for integration tests
+
+[proxy]
+bind_address = "127.0.0.1:0"  # Use port 0 for automatic assignment
+
+[logging]
+level = "debug"
+log_requests = true
+
+# Test rules
+[[rules]]
+method = "GET"
+url = "https://httpbin.org/get"
+
+[[rules]]
+method = "POST"
+url = "https://httpbin.org/post"
+
+[[rules]]
+method = "*"
+url = "https://httpbin.org/anything/*"
+
+[[rules]]
+method = "GET"
+url = "https://httpbin.org/status/*"

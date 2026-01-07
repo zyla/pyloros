@@ -1,0 +1,199 @@
+//! Redlimitador CLI - A filtering HTTPS proxy for agent network access control
+
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+use tracing_subscriber::EnvFilter;
+
+use redlimitador::{Config, GeneratedCa, ProxyServer};
+
+#[derive(Parser)]
+#[command(name = "redlimitador")]
+#[command(about = "A filtering HTTPS proxy for agent network access control")]
+#[command(version)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Run the proxy server
+    Run {
+        /// Path to configuration file
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+
+        /// Path to CA certificate (overrides config)
+        #[arg(long)]
+        ca_cert: Option<PathBuf>,
+
+        /// Path to CA private key (overrides config)
+        #[arg(long)]
+        ca_key: Option<PathBuf>,
+
+        /// Bind address (overrides config)
+        #[arg(short, long)]
+        bind: Option<String>,
+
+        /// Log level (error, warn, info, debug, trace)
+        #[arg(short, long, default_value = "info")]
+        log_level: String,
+    },
+
+    /// Generate a new CA certificate
+    GenerateCa {
+        /// Output directory for ca.crt and ca.key
+        #[arg(short, long, default_value = ".")]
+        out: PathBuf,
+
+        /// Certificate filename
+        #[arg(long, default_value = "ca.crt")]
+        cert_name: String,
+
+        /// Key filename
+        #[arg(long, default_value = "ca.key")]
+        key_name: String,
+    },
+
+    /// Validate a configuration file
+    ValidateConfig {
+        /// Path to configuration file
+        #[arg(short, long)]
+        config: PathBuf,
+    },
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse();
+
+    match cli.command {
+        Commands::Run {
+            config,
+            ca_cert,
+            ca_key,
+            bind,
+            log_level,
+        } => {
+            // Initialize logging
+            let filter = EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new(&log_level));
+
+            tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_target(false)
+                .init();
+
+            // Load config
+            let mut cfg = if let Some(config_path) = config {
+                tracing::info!(path = %config_path.display(), "Loading configuration");
+                Config::from_file(&config_path)?
+            } else {
+                tracing::info!("Using default configuration");
+                Config::from_str("")?
+            };
+
+            // Apply CLI overrides
+            if let Some(cert) = ca_cert {
+                cfg.proxy.ca_cert = Some(cert.to_string_lossy().to_string());
+            }
+            if let Some(key) = ca_key {
+                cfg.proxy.ca_key = Some(key.to_string_lossy().to_string());
+            }
+            if let Some(addr) = bind {
+                cfg.proxy.bind_address = addr;
+            }
+
+            // Validate required fields
+            if cfg.proxy.ca_cert.is_none() || cfg.proxy.ca_key.is_none() {
+                eprintln!("Error: CA certificate and key are required.");
+                eprintln!();
+                eprintln!("Either specify them in the config file or via --ca-cert and --ca-key flags.");
+                eprintln!();
+                eprintln!("To generate a new CA certificate:");
+                eprintln!("  redlimitador generate-ca --out ./certs/");
+                std::process::exit(1);
+            }
+
+            // Create and run server
+            let server = ProxyServer::new(cfg)?;
+
+            tracing::info!("Starting proxy server...");
+            tracing::info!("Configure clients with:");
+            tracing::info!("  export HTTP_PROXY=http://{}", server.bind_address());
+            tracing::info!("  export HTTPS_PROXY=http://{}", server.bind_address());
+
+            // Handle Ctrl+C
+            let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+            tokio::spawn(async move {
+                tokio::signal::ctrl_c().await.ok();
+                tracing::info!("Shutting down...");
+                let _ = shutdown_tx.send(());
+            });
+
+            server.run_until_shutdown(shutdown_rx).await?;
+        }
+
+        Commands::GenerateCa {
+            out,
+            cert_name,
+            key_name,
+        } => {
+            // Create output directory if needed
+            std::fs::create_dir_all(&out)?;
+
+            let cert_path = out.join(&cert_name);
+            let key_path = out.join(&key_name);
+
+            println!("Generating CA certificate...");
+
+            let ca = GeneratedCa::generate()?;
+            ca.save(&cert_path, &key_path)?;
+
+            println!("CA certificate generated successfully!");
+            println!();
+            println!("  Certificate: {}", cert_path.display());
+            println!("  Private key: {}", key_path.display());
+            println!();
+            println!("To use with the proxy:");
+            println!("  redlimitador run --ca-cert {} --ca-key {}", cert_path.display(), key_path.display());
+            println!();
+            println!("To trust the CA on Ubuntu/Debian:");
+            println!("  sudo cp {} /usr/local/share/ca-certificates/redlimitador.crt", cert_path.display());
+            println!("  sudo update-ca-certificates");
+            println!();
+            println!("IMPORTANT: Keep the private key secure!");
+        }
+
+        Commands::ValidateConfig { config } => {
+            println!("Validating configuration: {}", config.display());
+
+            let cfg = Config::from_file(&config)?;
+
+            println!("Configuration is valid!");
+            println!();
+            println!("  Bind address: {}", cfg.proxy.bind_address);
+            println!("  CA cert: {}", cfg.proxy.ca_cert.as_deref().unwrap_or("(not set)"));
+            println!("  CA key: {}", cfg.proxy.ca_key.as_deref().unwrap_or("(not set)"));
+            println!("  Log level: {}", cfg.logging.level);
+            println!("  Log requests: {}", cfg.logging.log_requests);
+            println!("  Rules: {}", cfg.rules.len());
+
+            if !cfg.rules.is_empty() {
+                println!();
+                println!("Rules:");
+                for (i, rule) in cfg.rules.iter().enumerate() {
+                    let ws = if rule.websocket { " [WebSocket]" } else { "" };
+                    println!("  {}. {} {}{}", i + 1, rule.method, rule.url, ws);
+                }
+            }
+
+            // Try to compile rules
+            let engine = redlimitador::FilterEngine::new(cfg.rules)?;
+            println!();
+            println!("All {} rules compiled successfully.", engine.rule_count());
+        }
+    }
+
+    Ok(())
+}

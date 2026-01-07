@@ -1,0 +1,66 @@
+# Redlimitador Basic Configuration Example
+#
+# This is a sample configuration file demonstrating the allowlist-based
+# filtering proxy for AI agent network access control.
+
+[proxy]
+# Address to bind the proxy server
+bind_address = "127.0.0.1:8080"
+
+# Path to CA certificate for MITM (required)
+# Generate with: redlimitador generate-ca --out ./certs/
+ca_cert = "./certs/ca.crt"
+ca_key = "./certs/ca.key"
+
+[logging]
+# Log level: error, warn, info, debug, trace
+level = "info"
+
+# Log individual requests (allowed and blocked)
+log_requests = true
+
+# Allowlist Rules
+# ===============
+# Requests must match at least one rule to be allowed.
+# All other requests are blocked by default.
+#
+# Pattern syntax:
+# - * matches any sequence of characters (including empty, across path segments)
+# - Method "*" matches any HTTP method
+# - wss:// is treated as https:// for matching
+
+# Allow health checks
+[[rules]]
+method = "GET"
+url = "https://api.example.com/health"
+
+# Allow reading user profiles (any user ID)
+[[rules]]
+method = "GET"
+url = "https://api.example.com/users/*/profile"
+
+# Allow any operation on a CDN
+[[rules]]
+method = "*"
+url = "https://cdn.example.com/*"
+
+# Allow GitHub API access
+[[rules]]
+method = "*"
+url = "https://api.github.com/*"
+
+# Allow GitHub raw content
+[[rules]]
+method = "GET"
+url = "https://raw.githubusercontent.com/*"
+
+# Allow specific search with query parameters
+[[rules]]
+method = "GET"
+url = "https://api.example.com/search?q=*"
+
+# Allow WebSocket connections to a specific endpoint
+[[rules]]
+method = "GET"
+url = "wss://realtime.example.com/events"
+websocket = true
