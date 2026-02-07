@@ -125,7 +125,11 @@ impl ProxyHandler {
                     "BLOCKED (HTTP)"
                 );
             }
-            return Ok(blocked_response(&method, &full_url, "Request blocked by policy"));
+            return Ok(blocked_response(
+                &method,
+                &full_url,
+                "Request blocked by policy",
+            ));
         }
 
         if self.log_requests {
@@ -142,9 +146,11 @@ impl ProxyHandler {
             .status(StatusCode::NOT_IMPLEMENTED)
             .header("Content-Type", "text/plain")
             .body(
-                Full::new(Bytes::from("Plain HTTP forwarding not implemented. Use HTTPS.\n"))
-                    .map_err(|e| match e {})
-                    .boxed(),
+                Full::new(Bytes::from(
+                    "Plain HTTP forwarding not implemented. Use HTTPS.\n",
+                ))
+                .map_err(|e| match e {})
+                .boxed(),
             )
             .unwrap())
     }

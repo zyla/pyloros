@@ -111,10 +111,8 @@ impl ProxyServer {
                 let filter_engine = filter_engine.clone();
 
                 let service = service_fn(move |req| {
-                    let handler = ProxyHandler::new(
-                        tunnel_handler.clone(),
-                        filter_engine.clone(),
-                    ).with_logging(log_requests);
+                    let handler = ProxyHandler::new(tunnel_handler.clone(), filter_engine.clone())
+                        .with_logging(log_requests);
                     async move { handler.handle(req).await }
                 });
 

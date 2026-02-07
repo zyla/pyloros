@@ -76,8 +76,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             log_level,
         } => {
             // Initialize logging
-            let filter = EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new(&log_level));
+            let filter =
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&log_level));
 
             tracing_subscriber::fmt()
                 .with_env_filter(filter)
@@ -90,7 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Config::from_file(&config_path)?
             } else {
                 tracing::info!("Using default configuration");
-                Config::from_str("")?
+                Config::parse("")?
             };
 
             // Apply CLI overrides
@@ -108,7 +108,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if cfg.proxy.ca_cert.is_none() || cfg.proxy.ca_key.is_none() {
                 eprintln!("Error: CA certificate and key are required.");
                 eprintln!();
-                eprintln!("Either specify them in the config file or via --ca-cert and --ca-key flags.");
+                eprintln!(
+                    "Either specify them in the config file or via --ca-cert and --ca-key flags."
+                );
                 eprintln!();
                 eprintln!("To generate a new CA certificate:");
                 eprintln!("  redlimitador generate-ca --out ./certs/");
@@ -156,10 +158,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  Private key: {}", key_path.display());
             println!();
             println!("To use with the proxy:");
-            println!("  redlimitador run --ca-cert {} --ca-key {}", cert_path.display(), key_path.display());
+            println!(
+                "  redlimitador run --ca-cert {} --ca-key {}",
+                cert_path.display(),
+                key_path.display()
+            );
             println!();
             println!("To trust the CA on Ubuntu/Debian:");
-            println!("  sudo cp {} /usr/local/share/ca-certificates/redlimitador.crt", cert_path.display());
+            println!(
+                "  sudo cp {} /usr/local/share/ca-certificates/redlimitador.crt",
+                cert_path.display()
+            );
             println!("  sudo update-ca-certificates");
             println!();
             println!("IMPORTANT: Keep the private key secure!");
@@ -173,8 +182,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Configuration is valid!");
             println!();
             println!("  Bind address: {}", cfg.proxy.bind_address);
-            println!("  CA cert: {}", cfg.proxy.ca_cert.as_deref().unwrap_or("(not set)"));
-            println!("  CA key: {}", cfg.proxy.ca_key.as_deref().unwrap_or("(not set)"));
+            println!(
+                "  CA cert: {}",
+                cfg.proxy.ca_cert.as_deref().unwrap_or("(not set)")
+            );
+            println!(
+                "  CA key: {}",
+                cfg.proxy.ca_key.as_deref().unwrap_or("(not set)")
+            );
             println!("  Log level: {}", cfg.logging.level);
             println!("  Log requests: {}", cfg.logging.log_requests);
             println!("  Rules: {}", cfg.rules.len());

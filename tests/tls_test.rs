@@ -51,7 +51,11 @@ fn test_host_certificate_generation() {
 
     for host in hosts {
         let (cert_der, key_der) = ca.generate_cert_for_host(host).unwrap();
-        assert!(!cert_der.is_empty(), "Cert for {} should not be empty", host);
+        assert!(
+            !cert_der.is_empty(),
+            "Cert for {} should not be empty",
+            host
+        );
         assert!(
             !key_der.secret_der().is_empty(),
             "Key for {} should not be empty",

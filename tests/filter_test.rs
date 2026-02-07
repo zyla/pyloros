@@ -41,10 +41,7 @@ fn test_empty_ruleset_blocks_everything() {
 
 #[test]
 fn test_exact_url_matching() {
-    let engine = FilterEngine::new(vec![
-        rule("GET", "https://api.example.com/health"),
-    ])
-    .unwrap();
+    let engine = FilterEngine::new(vec![rule("GET", "https://api.example.com/health")]).unwrap();
 
     // Exact match - allowed
     assert!(engine.is_allowed(&RequestInfo::http(
@@ -99,10 +96,7 @@ fn test_exact_url_matching() {
 
 #[test]
 fn test_wildcard_method() {
-    let engine = FilterEngine::new(vec![
-        rule("*", "https://cdn.example.com/*"),
-    ])
-    .unwrap();
+    let engine = FilterEngine::new(vec![rule("*", "https://cdn.example.com/*")]).unwrap();
 
     let methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"];
 
@@ -124,10 +118,7 @@ fn test_wildcard_method() {
 
 #[test]
 fn test_wildcard_host() {
-    let engine = FilterEngine::new(vec![
-        rule("GET", "https://*.github.com/*"),
-    ])
-    .unwrap();
+    let engine = FilterEngine::new(vec![rule("GET", "https://*.github.com/*")]).unwrap();
 
     // Subdomains - allowed
     assert!(engine.is_allowed(&RequestInfo::http(
@@ -170,10 +161,8 @@ fn test_wildcard_host() {
 
 #[test]
 fn test_wildcard_path() {
-    let engine = FilterEngine::new(vec![
-        rule("GET", "https://api.example.com/users/*/profile"),
-    ])
-    .unwrap();
+    let engine =
+        FilterEngine::new(vec![rule("GET", "https://api.example.com/users/*/profile")]).unwrap();
 
     // Single segment wildcard
     assert!(engine.is_allowed(&RequestInfo::http(
@@ -208,10 +197,8 @@ fn test_wildcard_path() {
 
 #[test]
 fn test_query_string_matching() {
-    let engine = FilterEngine::new(vec![
-        rule("GET", "https://api.example.com/search?q=*"),
-    ])
-    .unwrap();
+    let engine =
+        FilterEngine::new(vec![rule("GET", "https://api.example.com/search?q=*")]).unwrap();
 
     // With matching query - allowed
     assert!(engine.is_allowed(&RequestInfo::http(
@@ -255,10 +242,7 @@ fn test_query_string_matching() {
 
 #[test]
 fn test_port_matching() {
-    let engine = FilterEngine::new(vec![
-        rule("GET", "https://api.example.com:8443/api"),
-    ])
-    .unwrap();
+    let engine = FilterEngine::new(vec![rule("GET", "https://api.example.com:8443/api")]).unwrap();
 
     // Explicit port match - allowed
     assert!(engine.is_allowed(&RequestInfo::http(
@@ -293,10 +277,7 @@ fn test_port_matching() {
 
 #[test]
 fn test_default_port_matching() {
-    let engine = FilterEngine::new(vec![
-        rule("GET", "https://api.example.com:443/api"),
-    ])
-    .unwrap();
+    let engine = FilterEngine::new(vec![rule("GET", "https://api.example.com:443/api")]).unwrap();
 
     // Explicit 443 - allowed
     assert!(engine.is_allowed(&RequestInfo::http(
@@ -418,10 +399,7 @@ fn test_websocket_rules() {
 
 #[test]
 fn test_case_insensitive_method() {
-    let engine = FilterEngine::new(vec![
-        rule("get", "https://api.example.com/test"),
-    ])
-    .unwrap();
+    let engine = FilterEngine::new(vec![rule("get", "https://api.example.com/test")]).unwrap();
 
     assert!(engine.is_allowed(&RequestInfo::http(
         "GET",
@@ -484,9 +462,10 @@ fn test_github_like_rules() {
 
 #[test]
 fn test_complex_path_patterns() {
-    let engine = FilterEngine::new(vec![
-        rule("GET", "https://api.example.com/v*/users/*/posts/*"),
-    ])
+    let engine = FilterEngine::new(vec![rule(
+        "GET",
+        "https://api.example.com/v*/users/*/posts/*",
+    )])
     .unwrap();
 
     assert!(engine.is_allowed(&RequestInfo::http(
@@ -522,7 +501,14 @@ fn test_request_info_full_url() {
     let r1 = RequestInfo::http("GET", "https", "example.com", None, "/path", None);
     assert_eq!(r1.full_url(), "https://example.com/path");
 
-    let r2 = RequestInfo::http("GET", "https", "example.com", Some(8443), "/path", Some("q=1"));
+    let r2 = RequestInfo::http(
+        "GET",
+        "https",
+        "example.com",
+        Some(8443),
+        "/path",
+        Some("q=1"),
+    );
     assert_eq!(r2.full_url(), "https://example.com:8443/path?q=1");
 
     let r3 = RequestInfo::http("GET", "http", "example.com", Some(80), "/path", None);
