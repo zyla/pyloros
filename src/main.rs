@@ -2,6 +2,7 @@
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
 use redlimitador::{Config, GeneratedCa, ProxyServer};
@@ -117,8 +118,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
 
+            // Extract optional test-only overrides before moving cfg
+            let upstream_override_port = cfg.proxy.upstream_override_port;
+            let upstream_tls_ca = cfg.proxy.upstream_tls_ca.clone();
+
             // Create and run server
-            let server = ProxyServer::new(cfg)?;
+            let mut server = ProxyServer::new(cfg)?;
+
+            if let Some(port) = upstream_override_port {
+                server = server.with_upstream_port_override(port);
+            }
+            if let Some(ref ca_path) = upstream_tls_ca {
+                let pem = std::fs::read(ca_path)
+                    .map_err(|e| format!("Failed to read upstream TLS CA '{}': {}", ca_path, e))?;
+                let mut root_store = rustls::RootCertStore::empty();
+                for cert in rustls_pemfile::certs(&mut &pem[..]) {
+                    root_store.add(cert?)?;
+                }
+                let mut tls_config = rustls::ClientConfig::builder()
+                    .with_root_certificates(root_store)
+                    .with_no_client_auth();
+                tls_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+                server = server.with_upstream_tls(Arc::new(tls_config));
+            }
 
             tracing::info!("Starting proxy server...");
             tracing::info!("Configure clients with:");
