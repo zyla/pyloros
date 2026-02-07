@@ -51,7 +51,7 @@ When adding many tests, add them in groups with commit checkpoints — don't wri
 
 ## Worktree Workflow
 
-When asked to "work on X in a separate worktree", use git worktrees for parallel development so the main working directory stays clean.
+**Always** use git worktrees for development work so the main working directory stays clean. Do not work directly on main.
 
 **Setup:**
 
