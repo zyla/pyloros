@@ -1,7 +1,7 @@
 //! CONNECT tunnel handling with TLS MITM
 
 use bytes::Bytes;
-use http_body_util::{combinators::BoxBody, BodyExt, Full};
+use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
@@ -174,7 +174,13 @@ async fn handle_tunneled_request(
 
     // Forward the request to the actual server
     let connect_port = upstream_port_override.unwrap_or(port);
-    match forward_request(req, host, connect_port, upstream_tls_config).await {
+    let result = if is_websocket {
+        forward_websocket(req, host, connect_port, upstream_tls_config).await
+    } else {
+        forward_request(req, host, connect_port, upstream_tls_config).await
+    };
+
+    match result {
         Ok(resp) => Ok(resp),
         Err(e) => {
             tracing::error!(error = %e, "Failed to forward request");
@@ -183,14 +189,15 @@ async fn handle_tunneled_request(
     }
 }
 
-/// Forward a request to the upstream server
-async fn forward_request(
-    req: Request<Incoming>,
-    host: String,
+/// Connect to upstream over TLS, returning the TLS stream.
+///
+/// Shared by both `forward_request` (which branches h1/h2 based on ALPN)
+/// and `forward_websocket` (which always uses h1 with upgrades).
+async fn connect_upstream_tls(
+    host: &str,
     port: u16,
     upstream_tls_config: Option<Arc<ClientConfig>>,
-) -> Result<Response<BoxBody<Bytes, hyper::Error>>> {
-    // Connect to upstream
+) -> Result<tokio_rustls::client::TlsStream<TcpStream>> {
     let addr = format!("{}:{}", host, port);
     let tcp = TcpStream::connect(&addr)
         .await
@@ -212,21 +219,25 @@ async fn forward_request(
 
     let connector = TlsConnector::from(client_config);
 
-    let server_name = rustls::pki_types::ServerName::try_from(host.clone())
+    let server_name = rustls::pki_types::ServerName::try_from(host.to_string())
         .map_err(|e| Error::proxy(format!("Invalid server name '{}': {}", host, e)))?;
 
-    let tls_stream = connector
+    connector
         .connect(server_name, tcp)
         .await
-        .map_err(|e| Error::tls(format!("TLS connection to {} failed: {}", host, e)))?;
+        .map_err(|e| Error::tls(format!("TLS connection to {} failed: {}", host, e)))
+}
 
-    // Check negotiated ALPN protocol
-    let negotiated_h2 = tls_stream.get_ref().1.alpn_protocol() == Some(b"h2".as_slice());
-    tracing::debug!(host = %host, h2 = negotiated_h2, "Upstream TLS handshake complete");
-
-    // Rebuild the request with proper host header before handshake
-    let (parts, body) = req.into_parts();
+/// Rebuild an incoming request for forwarding to the upstream server,
+/// updating the Host header to match the target.
+fn rebuild_request_for_upstream(
+    parts: hyper::http::request::Parts,
+    body: Incoming,
+    host: &str,
+    port: u16,
+) -> Result<Request<Incoming>> {
     let mut builder = Request::builder().method(parts.method).uri(parts.uri);
+
     for (name, value) in parts.headers.iter() {
         if name == hyper::header::HOST {
             builder = builder.header(name, format!("{}:{}", host, port));
@@ -234,9 +245,27 @@ async fn forward_request(
             builder = builder.header(name, value);
         }
     }
-    let req = builder
+
+    builder
         .body(body)
-        .map_err(|e| Error::proxy(format!("Failed to build request: {}", e)))?;
+        .map_err(|e| Error::proxy(format!("Failed to build request: {}", e)))
+}
+
+/// Forward a request to the upstream server (supports h1 and h2 via ALPN).
+async fn forward_request(
+    req: Request<Incoming>,
+    host: String,
+    port: u16,
+    upstream_tls_config: Option<Arc<ClientConfig>>,
+) -> Result<Response<BoxBody<Bytes, hyper::Error>>> {
+    let tls_stream = connect_upstream_tls(&host, port, upstream_tls_config).await?;
+
+    // Check negotiated ALPN protocol
+    let negotiated_h2 = tls_stream.get_ref().1.alpn_protocol() == Some(b"h2".as_slice());
+    tracing::debug!(host = %host, h2 = negotiated_h2, "Upstream TLS handshake complete");
+
+    let (parts, body) = req.into_parts();
+    let req = rebuild_request_for_upstream(parts, body, &host, port)?;
 
     let io = TokioIo::new(tls_stream);
 
@@ -281,6 +310,86 @@ async fn forward_request(
         let body = body.map_err(|e| e).boxed();
         Ok(Response::from_parts(parts, body))
     }
+}
+
+/// Forward a WebSocket upgrade request, then bidirectionally copy frames.
+///
+/// WebSocket always uses HTTP/1.1 (upgrade mechanism), so this bypasses
+/// the h2 ALPN negotiation and forces an h1 connection with upgrades enabled.
+async fn forward_websocket(
+    mut req: Request<Incoming>,
+    host: String,
+    port: u16,
+    upstream_tls_config: Option<Arc<ClientConfig>>,
+) -> Result<Response<BoxBody<Bytes, hyper::Error>>> {
+    let tls_stream = connect_upstream_tls(&host, port, upstream_tls_config).await?;
+    let io = TokioIo::new(tls_stream);
+
+    // WebSocket requires HTTP/1.1 with upgrades
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(io)
+        .await
+        .map_err(|e| Error::proxy(format!("HTTP handshake failed: {}", e)))?;
+
+    tokio::spawn(async move {
+        if let Err(e) = conn.with_upgrades().await {
+            tracing::debug!("Connection error: {}", e);
+        }
+    });
+
+    // Extract the client-side upgrade future via &mut (doesn't consume the request)
+    let client_on_upgrade = hyper::upgrade::on(&mut req);
+
+    let (parts, body) = req.into_parts();
+    let upstream_req = rebuild_request_for_upstream(parts, body, &host, port)?;
+
+    let mut resp = sender
+        .send_request(upstream_req)
+        .await
+        .map_err(|e| Error::proxy(format!("WebSocket request failed: {}", e)))?;
+
+    if resp.status() != StatusCode::SWITCHING_PROTOCOLS {
+        let (parts, body) = resp.into_parts();
+        let body = body.map_err(|e| e).boxed();
+        return Ok(Response::from_parts(parts, body));
+    }
+
+    // Extract the upstream upgrade future via &mut
+    let upstream_on_upgrade = hyper::upgrade::on(&mut resp);
+
+    // Build a 101 response to send back to the client, copying upgrade headers
+    let mut client_resp = Response::builder().status(StatusCode::SWITCHING_PROTOCOLS);
+    for (name, value) in resp.headers() {
+        client_resp = client_resp.header(name, value);
+    }
+
+    let client_response = client_resp
+        .body(
+            Empty::new()
+                .map_err(|e: std::convert::Infallible| match e {})
+                .boxed(),
+        )
+        .map_err(|e| Error::proxy(format!("Failed to build 101 response: {}", e)))?;
+
+    // Spawn a task to bridge the two upgraded connections
+    tokio::spawn(async move {
+        let (client_upgraded, upstream_upgraded) =
+            match tokio::try_join!(client_on_upgrade, upstream_on_upgrade) {
+                Ok(pair) => pair,
+                Err(e) => {
+                    tracing::debug!("WebSocket upgrade failed: {}", e);
+                    return;
+                }
+            };
+
+        let mut client_io = TokioIo::new(client_upgraded);
+        let mut upstream_io = TokioIo::new(upstream_upgraded);
+
+        if let Err(e) = tokio::io::copy_bidirectional(&mut client_io, &mut upstream_io).await {
+            tracing::debug!("WebSocket bridge ended: {}", e);
+        }
+    });
+
+    Ok(client_response)
 }
 
 /// Create an HTTP 451 response for blocked requests
