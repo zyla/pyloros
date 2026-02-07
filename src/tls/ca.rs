@@ -109,10 +109,9 @@ impl CertificateAuthority {
 
         // Parse the certificate PEM to DER
         let mut cert_reader = BufReader::new(cert_pem.as_bytes());
-        let certs: Vec<CertificateDer<'static>> =
-            rustls_pemfile::certs(&mut cert_reader)
-                .filter_map(|r| r.ok())
-                .collect();
+        let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_reader)
+            .filter_map(|r| r.ok())
+            .collect();
 
         let cert_der = certs
             .into_iter()
@@ -154,16 +153,13 @@ impl CertificateAuthority {
         let mut params = CertificateParams::default();
 
         // Set common name
-        params
-            .distinguished_name
-            .push(DnType::CommonName, hostname);
+        params.distinguished_name.push(DnType::CommonName, hostname);
 
         // Add Subject Alternative Name
-        params.subject_alt_names = vec![rcgen::SanType::DnsName(
-            hostname
-                .try_into()
-                .map_err(|e| Error::certificate(format!("Invalid hostname '{}': {}", hostname, e)))?,
-        )];
+        params.subject_alt_names =
+            vec![rcgen::SanType::DnsName(hostname.try_into().map_err(
+                |e| Error::certificate(format!("Invalid hostname '{}': {}", hostname, e)),
+            )?)];
 
         // This is not a CA
         params.is_ca = IsCa::NoCa;
@@ -182,8 +178,7 @@ impl CertificateAuthority {
         params.not_after = params.not_before + time::Duration::days(1);
 
         // Generate new key pair for this cert
-        let cert_key_pair =
-            KeyPair::generate().map_err(|e| Error::certificate(e.to_string()))?;
+        let cert_key_pair = KeyPair::generate().map_err(|e| Error::certificate(e.to_string()))?;
 
         // Reconstruct the CA cert from its DER for signing
         let ca_params = CertificateParams::from_ca_cert_der(&self.cert_der)

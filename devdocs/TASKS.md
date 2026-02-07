@@ -1,5 +1,7 @@
 Dear agent, track progress here
 
+## Completed
+
 - [x] Add test coverage reporting with `cargo-llvm-cov`
 - [x] Add end-to-end integration tests
   - [x] ProxyServer bind/serve split for port 0 discovery
@@ -9,3 +11,4 @@ Dear agent, track progress here
   - [x] Wildcard + multi-rule tests
   - [x] Header forwarding, error handling, large body tests
   - [x] Fix rcgen CA cert chain verification (from_ca_cert_der)
+- [x] Add GitHub Actions CI (fmt, clippy, tests, coverage)

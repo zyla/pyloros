@@ -129,10 +129,8 @@ impl ProxyServer {
                 let filter_engine = filter_engine.clone();
 
                 let service = service_fn(move |req| {
-                    let handler = ProxyHandler::new(
-                        tunnel_handler.clone(),
-                        filter_engine.clone(),
-                    ).with_logging(log_requests);
+                    let handler = ProxyHandler::new(tunnel_handler.clone(), filter_engine.clone())
+                        .with_logging(log_requests);
                     async move { handler.handle(req).await }
                 });
 
@@ -239,9 +237,9 @@ impl ProxyServer {
             .await
             .map_err(|e| Error::proxy(format!("Failed to bind to {}: {}", addr, e)))?;
 
-        let local_addr = listener.local_addr().map_err(|e| {
-            Error::proxy(format!("Failed to get local address: {}", e))
-        })?;
+        let local_addr = listener
+            .local_addr()
+            .map_err(|e| Error::proxy(format!("Failed to get local address: {}", e)))?;
 
         self.listener = Some(listener);
         Ok(local_addr)
@@ -250,10 +248,7 @@ impl ProxyServer {
     /// Serve connections using a previously bound listener, with graceful shutdown.
     ///
     /// Must call `bind()` first. Panics if no listener is stored.
-    pub async fn serve(
-        mut self,
-        mut shutdown: tokio::sync::oneshot::Receiver<()>,
-    ) -> Result<()> {
+    pub async fn serve(mut self, mut shutdown: tokio::sync::oneshot::Receiver<()>) -> Result<()> {
         let listener = self
             .listener
             .take()
@@ -314,8 +309,9 @@ impl ProxyServer {
     }
 
     fn make_tunnel_handler(&self) -> TunnelHandler {
-        let mut handler = TunnelHandler::new(self.mitm_generator.clone(), self.filter_engine.clone())
-            .with_logging(self.config.logging.log_requests);
+        let mut handler =
+            TunnelHandler::new(self.mitm_generator.clone(), self.filter_engine.clone())
+                .with_logging(self.config.logging.log_requests);
         if let Some(port) = self.upstream_port_override {
             handler = handler.with_upstream_port_override(port);
         }
