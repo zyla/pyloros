@@ -41,7 +41,7 @@ subcommands:
 
 ### Logging
 - Configurable log level (error/warn/info/debug/trace)
-- Optional request logging (allowed/blocked)
+- Separate control over logging of allowed and blocked requests (e.g., log only blocked to reduce noise, or only allowed for auditing)
 
 ## Technical Decisions
 
@@ -69,7 +69,11 @@ ca_key = "/path/to/ca.key"
 
 [logging]
 level = "info"
-log_requests = true
+# log_requests accepts a bool (backward compat) or a table:
+#   log_requests = true              # both allowed + blocked
+#   log_requests = false             # neither
+#   log_requests = { allowed = true, blocked = false }  # granular
+log_requests = { allowed = true, blocked = true }
 
 [[rules]]
 method = "GET"

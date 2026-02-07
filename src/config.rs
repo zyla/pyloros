@@ -1,6 +1,6 @@
 //! Configuration parsing and management
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::path::Path;
 
 use crate::error::{Error, Result};
@@ -50,32 +50,75 @@ fn default_bind_address() -> String {
 }
 
 /// Logging configuration
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct LoggingConfig {
     /// Log level (error, warn, info, debug, trace)
-    #[serde(default = "default_log_level")]
     pub level: String,
 
-    /// Whether to log individual requests
-    #[serde(default = "default_log_requests")]
-    pub log_requests: bool,
+    /// Whether to log allowed requests
+    pub log_allowed_requests: bool,
+
+    /// Whether to log blocked requests
+    pub log_blocked_requests: bool,
 }
 
 impl Default for LoggingConfig {
     fn default() -> Self {
         Self {
-            level: default_log_level(),
-            log_requests: default_log_requests(),
+            level: "info".to_string(),
+            log_allowed_requests: true,
+            log_blocked_requests: true,
         }
     }
+}
+
+/// Helper for deserializing `log_requests` as either a bool or a table.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum LogRequestsValue {
+    Bool(bool),
+    Table {
+        #[serde(default = "default_true")]
+        allowed: bool,
+        #[serde(default = "default_true")]
+        blocked: bool,
+    },
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Raw helper struct for deserializing LoggingConfig from TOML.
+#[derive(Deserialize)]
+struct LoggingConfigRaw {
+    #[serde(default = "default_log_level")]
+    level: String,
+    #[serde(default)]
+    log_requests: Option<LogRequestsValue>,
 }
 
 fn default_log_level() -> String {
     "info".to_string()
 }
 
-fn default_log_requests() -> bool {
-    true
+impl<'de> Deserialize<'de> for LoggingConfig {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = LoggingConfigRaw::deserialize(deserializer)?;
+        let (log_allowed, log_blocked) = match raw.log_requests {
+            None => (true, true),
+            Some(LogRequestsValue::Bool(b)) => (b, b),
+            Some(LogRequestsValue::Table { allowed, blocked }) => (allowed, blocked),
+        };
+        Ok(LoggingConfig {
+            level: raw.level,
+            log_allowed_requests: log_allowed,
+            log_blocked_requests: log_blocked,
+        })
+    }
 }
 
 /// A single allowlist rule
@@ -214,11 +257,12 @@ websocket = true
 
         assert_eq!(config.proxy.bind_address, "127.0.0.1:8080");
         assert_eq!(config.logging.level, "info");
-        assert!(config.logging.log_requests);
+        assert!(config.logging.log_allowed_requests);
+        assert!(config.logging.log_blocked_requests);
     }
 
     #[test]
-    fn test_logging_config() {
+    fn test_logging_config_bool_false() {
         let toml = r#"
 [logging]
 level = "debug"
@@ -227,7 +271,56 @@ log_requests = false
 
         let config = Config::parse(toml).unwrap();
         assert_eq!(config.logging.level, "debug");
-        assert!(!config.logging.log_requests);
+        assert!(!config.logging.log_allowed_requests);
+        assert!(!config.logging.log_blocked_requests);
+    }
+
+    #[test]
+    fn test_logging_config_bool_true() {
+        let toml = r#"
+[logging]
+log_requests = true
+"#;
+
+        let config = Config::parse(toml).unwrap();
+        assert!(config.logging.log_allowed_requests);
+        assert!(config.logging.log_blocked_requests);
+    }
+
+    #[test]
+    fn test_logging_config_table_mixed() {
+        let toml = r#"
+[logging]
+log_requests = { allowed = true, blocked = false }
+"#;
+
+        let config = Config::parse(toml).unwrap();
+        assert!(config.logging.log_allowed_requests);
+        assert!(!config.logging.log_blocked_requests);
+    }
+
+    #[test]
+    fn test_logging_config_table_partial_defaults() {
+        let toml = r#"
+[logging]
+log_requests = { blocked = false }
+"#;
+
+        let config = Config::parse(toml).unwrap();
+        assert!(config.logging.log_allowed_requests); // defaults to true
+        assert!(!config.logging.log_blocked_requests);
+    }
+
+    #[test]
+    fn test_logging_config_omitted() {
+        let toml = r#"
+[logging]
+level = "warn"
+"#;
+
+        let config = Config::parse(toml).unwrap();
+        assert!(config.logging.log_allowed_requests);
+        assert!(config.logging.log_blocked_requests);
     }
 
     #[test]

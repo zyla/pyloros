@@ -13,7 +13,8 @@ use crate::filter::{FilterEngine, RequestInfo};
 pub struct ProxyHandler {
     tunnel_handler: Arc<TunnelHandler>,
     filter_engine: Arc<FilterEngine>,
-    log_requests: bool,
+    log_allowed_requests: bool,
+    log_blocked_requests: bool,
 }
 
 impl ProxyHandler {
@@ -21,12 +22,14 @@ impl ProxyHandler {
         Self {
             tunnel_handler,
             filter_engine,
-            log_requests: true,
+            log_allowed_requests: true,
+            log_blocked_requests: true,
         }
     }
 
-    pub fn with_logging(mut self, enabled: bool) -> Self {
-        self.log_requests = enabled;
+    pub fn with_request_logging(mut self, log_allowed: bool, log_blocked: bool) -> Self {
+        self.log_allowed_requests = log_allowed;
+        self.log_blocked_requests = log_blocked;
         self
     }
 
@@ -68,7 +71,8 @@ impl ProxyHandler {
 
         // Clone what we need for the spawned task
         let tunnel_handler = self.tunnel_handler.clone();
-        let log_requests = self.log_requests;
+        let log_allowed = self.log_allowed_requests;
+        let log_blocked = self.log_blocked_requests;
 
         // Spawn the tunnel handling
         tokio::spawn(async move {
@@ -81,7 +85,7 @@ impl ProxyHandler {
             };
 
             if let Err(e) = tunnel_handler
-                .run_mitm_tunnel(upgraded, &host, port, log_requests)
+                .run_mitm_tunnel(upgraded, &host, port, log_allowed, log_blocked)
                 .await
             {
                 // Don't log connection closed errors
@@ -118,7 +122,7 @@ impl ProxyHandler {
 
         // Check filter
         if !self.filter_engine.is_allowed(&request_info) {
-            if self.log_requests {
+            if self.log_blocked_requests {
                 tracing::warn!(
                     method = %method,
                     url = %full_url,
@@ -132,7 +136,7 @@ impl ProxyHandler {
             ));
         }
 
-        if self.log_requests {
+        if self.log_allowed_requests {
             tracing::info!(
                 method = %method,
                 url = %full_url,
