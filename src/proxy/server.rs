@@ -3,6 +3,7 @@
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
+use rustls::ClientConfig;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -20,6 +21,8 @@ pub struct ProxyServer {
     filter_engine: Arc<FilterEngine>,
     mitm_generator: Arc<MitmCertificateGenerator>,
     listener: Option<TcpListener>,
+    upstream_port_override: Option<u16>,
+    upstream_tls_config: Option<Arc<ClientConfig>>,
 }
 
 impl ProxyServer {
@@ -53,6 +56,8 @@ impl ProxyServer {
             filter_engine,
             mitm_generator,
             listener: None,
+            upstream_port_override: None,
+            upstream_tls_config: None,
         })
     }
 
@@ -67,7 +72,21 @@ impl ProxyServer {
             filter_engine,
             mitm_generator,
             listener: None,
+            upstream_port_override: None,
+            upstream_tls_config: None,
         }
+    }
+
+    /// Override the upstream port for all forwarded connections (for testing).
+    pub fn with_upstream_port_override(mut self, port: u16) -> Self {
+        self.upstream_port_override = Some(port);
+        self
+    }
+
+    /// Inject a custom TLS config for upstream connections (for testing with self-signed certs).
+    pub fn with_upstream_tls(mut self, config: Arc<ClientConfig>) -> Self {
+        self.upstream_tls_config = Some(config);
+        self
     }
 
     /// Run the proxy server
@@ -85,11 +104,7 @@ impl ProxyServer {
 
         tracing::info!(address = %addr, "Proxy server listening");
 
-        // Create tunnel handler
-        let tunnel_handler = Arc::new(
-            TunnelHandler::new(self.mitm_generator.clone(), self.filter_engine.clone())
-                .with_logging(self.config.logging.log_requests),
-        );
+        let tunnel_handler = Arc::new(self.make_tunnel_handler());
 
         loop {
             let (stream, client_addr) = match listener.accept().await {
@@ -154,10 +169,7 @@ impl ProxyServer {
 
         tracing::info!(address = %addr, "Proxy server listening");
 
-        let tunnel_handler = Arc::new(
-            TunnelHandler::new(self.mitm_generator.clone(), self.filter_engine.clone())
-                .with_logging(self.config.logging.log_requests),
-        );
+        let tunnel_handler = Arc::new(self.make_tunnel_handler());
 
         loop {
             tokio::select! {
@@ -302,8 +314,15 @@ impl ProxyServer {
     }
 
     fn make_tunnel_handler(&self) -> TunnelHandler {
-        TunnelHandler::new(self.mitm_generator.clone(), self.filter_engine.clone())
-            .with_logging(self.config.logging.log_requests)
+        let mut handler = TunnelHandler::new(self.mitm_generator.clone(), self.filter_engine.clone())
+            .with_logging(self.config.logging.log_requests);
+        if let Some(port) = self.upstream_port_override {
+            handler = handler.with_upstream_port_override(port);
+        }
+        if let Some(ref config) = self.upstream_tls_config {
+            handler = handler.with_upstream_tls(config.clone());
+        }
+        handler
     }
 
     /// Get the bind address
