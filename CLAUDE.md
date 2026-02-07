@@ -24,11 +24,11 @@ cargo run -- validate-config --config config.toml        # Validate config
 
 ## Development process
 
-We're developing this very incrementally. Start simple, don't overcomplicate, leave corner cases for later.
+`devdocs/SPEC.md` is a declarative specification of what we want this product to be: features, technical choices (libraries, protocols, testing strategy), and configuration format. Code should ultimately be maintained to match the requirements here. When we want to change something in the product, we first modify the SPEC.
 
 IMPORTANT: Maintain progress in devdocs/TASKS.md.
 
-After context compaction (when conversation history is summarized), reread relevant spec documents to stay on track with requirements and guidelines.
+After context compaction (when conversation history is summarized), reread `devdocs/SPEC.md` and any other relevant spec documents to stay on track with requirements and guidelines.
 
 When facing design decisions, do the simpler thing but save it in devdocs/QUESTIONS.md for further consideration.
 
@@ -38,7 +38,7 @@ Commit after each phase/step is achieved and verified - don't accumulate too man
 
 Use e2e tests (and other types if suitable) to verify all functionality you're implementing, don't just wing it.
 
-You can keep refining the spec document as we work and discover new things.
+You can keep refining the spec document as we work and discover new things, but confirm with human for major changes.
 
 If you receive advice during development, you can add it to this section - will come handy during subsequent iterations.
 
