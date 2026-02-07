@@ -1,6 +1,6 @@
 mod common;
 
-use common::{ok_handler, ws_echo_handler, ws_rule, TestCa, TestProxy, TestUpstream};
+use common::{ws_echo_handler, ws_rule, TestCa, TestProxy, TestUpstream};
 use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -127,6 +127,60 @@ async fn test_websocket_blocked_by_filter() {
         resp
     );
 
+    proxy.shutdown();
+    upstream.shutdown();
+}
+
+// ---------------------------------------------------------------------------
+// Group 2: Multiple messages + binary
+// ---------------------------------------------------------------------------
+
+/// Send several text messages and verify all are echoed back in order.
+#[tokio::test]
+async fn test_websocket_multiple_messages() {
+    let ca = TestCa::generate();
+    let upstream = TestUpstream::start(&ca, ws_echo_handler()).await;
+    let proxy = TestProxy::start(&ca, vec![ws_rule("wss://localhost/*")], upstream.port()).await;
+
+    let mut ws = ws_connect_through_proxy(proxy.addr(), &ca, "/multi").await;
+
+    let messages = vec!["first", "second", "third", "fourth", "fifth"];
+    for msg in &messages {
+        ws.send(Message::Text((*msg).into())).await.unwrap();
+    }
+
+    for expected in &messages {
+        let msg = ws.next().await.unwrap().unwrap();
+        assert_eq!(msg, Message::Text((*expected).into()));
+    }
+
+    ws.close(None).await.unwrap();
+    proxy.shutdown();
+    upstream.shutdown();
+}
+
+/// Send binary data through the WebSocket proxy and verify integrity.
+#[tokio::test]
+async fn test_websocket_binary_message() {
+    let ca = TestCa::generate();
+    let upstream = TestUpstream::start(&ca, ws_echo_handler()).await;
+    let proxy = TestProxy::start(&ca, vec![ws_rule("wss://localhost/*")], upstream.port()).await;
+
+    let mut ws = ws_connect_through_proxy(proxy.addr(), &ca, "/binary").await;
+
+    // Send binary data with all byte values 0-255
+    let binary_data: Vec<u8> = (0..=255).collect();
+    ws.send(Message::Binary(binary_data.clone().into()))
+        .await
+        .unwrap();
+
+    let msg = ws.next().await.unwrap().unwrap();
+    match msg {
+        Message::Binary(data) => assert_eq!(data.as_ref(), binary_data.as_slice()),
+        other => panic!("Expected Binary message, got {:?}", other),
+    }
+
+    ws.close(None).await.unwrap();
     proxy.shutdown();
     upstream.shutdown();
 }
