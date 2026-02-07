@@ -24,3 +24,6 @@ Dear agent, track progress here
   - [x] Branch on `is_websocket` in `handle_tunneled_request()`
   - [x] Test infrastructure: `ws_echo_handler()`, `ws_rule()`, `.with_upgrades()` on TestUpstream
   - [x] E2E tests: echo, blocked, multiple messages, binary, upstream rejection
+- [x] CLI integration tests (`validate-config`, `generate-ca`)
+  - [x] validate-config: valid minimal, valid with rules, invalid TOML, nonexistent file, invalid rule pattern
+  - [x] generate-ca: default output, custom cert/key names, auto-create output dir, PEM validation

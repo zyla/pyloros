@@ -92,6 +92,7 @@ websocket = true
   - covering all features, including:
     - different filtering rules
     - different protocols (http/1.1, http/2, websocket)
+- CLI integration tests for all user-facing subcommands (`run`, `generate-ca`, `validate-config`)
 - tests run in Github Actions
 - test coverage is reported
 
