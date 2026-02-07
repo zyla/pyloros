@@ -100,6 +100,7 @@ impl MitmCertificateGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_report;
     use crate::tls::ca::GeneratedCa;
 
     fn create_test_generator() -> MitmCertificateGenerator {
@@ -110,48 +111,49 @@ mod tests {
 
     #[test]
     fn test_generate_cert() {
+        let t = test_report!("MITM generator produces cert+key");
         let gen = create_test_generator();
         let (cert, key) = gen.get_cert_for_host("example.com").unwrap();
 
-        assert!(!cert.is_empty());
-        assert!(!key.secret_der().is_empty());
+        t.assert_true("cert not empty", !cert.is_empty());
+        t.assert_true("key not empty", !key.secret_der().is_empty());
     }
 
     #[test]
     fn test_cache_hit() {
+        let t = test_report!("MITM generator caches on second call");
         let gen = create_test_generator();
 
-        // First call generates
         let _ = gen.get_cert_for_host("example.com").unwrap();
-        assert_eq!(gen.cache_size(), 1);
+        t.assert_eq("after first call", &gen.cache_size(), &1usize);
 
-        // Second call should use cache
         let _ = gen.get_cert_for_host("example.com").unwrap();
-        assert_eq!(gen.cache_size(), 1);
+        t.assert_eq("after second call (cached)", &gen.cache_size(), &1usize);
     }
 
     #[test]
     fn test_different_hosts() {
+        let t = test_report!("MITM generator stores per-host");
         let gen = create_test_generator();
 
         let _ = gen.get_cert_for_host("one.com").unwrap();
         let _ = gen.get_cert_for_host("two.com").unwrap();
 
-        assert_eq!(gen.cache_size(), 2);
+        t.assert_eq("cache size", &gen.cache_size(), &2usize);
     }
 
     #[test]
     fn test_server_config() {
-        // Install crypto provider for test
+        let t = test_report!("Server config has h2+h1 ALPN");
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
         let gen = create_test_generator();
         let config = gen.server_config_for_host("example.com").unwrap();
 
-        // Verify ALPN is set for h2 + h1
-        assert_eq!(
-            config.alpn_protocols,
-            vec![b"h2".to_vec(), b"http/1.1".to_vec()]
+        t.assert_eq(
+            "ALPN protocols",
+            &config.alpn_protocols,
+            &vec![b"h2".to_vec(), b"http/1.1".to_vec()],
         );
     }
 }

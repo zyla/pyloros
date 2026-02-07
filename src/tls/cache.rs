@@ -93,6 +93,7 @@ impl Default for CertificateCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_report;
     use crate::tls::ca::{CertificateAuthority, GeneratedCa};
 
     fn generate_test_cert(hostname: &str) -> (CertificateDer<'static>, PrivateKeyDer<'static>) {
@@ -103,40 +104,42 @@ mod tests {
 
     #[test]
     fn test_cache_put_get() {
+        let t = test_report!("Cache put and get returns same cert");
         let cache = CertificateCache::default();
 
         let (cert, key) = generate_test_cert("example.com");
         cache.put("example.com".to_string(), cert.clone(), key);
 
         let result = cache.get("example.com");
-        assert!(result.is_some());
+        t.assert_true("cache hit", result.is_some());
 
         let (cached_cert, _) = result.unwrap();
-        assert_eq!(cached_cert.as_ref(), cert.as_ref());
+        t.assert_true("cert matches", cached_cert.as_ref() == cert.as_ref());
     }
 
     #[test]
     fn test_cache_miss() {
+        let t = test_report!("Cache miss returns None");
         let cache = CertificateCache::default();
-        assert!(cache.get("nonexistent.com").is_none());
+        t.assert_true("nonexistent key", cache.get("nonexistent.com").is_none());
     }
 
     #[test]
     fn test_cache_expiration() {
-        // Very short TTL
+        let t = test_report!("Cache entries expire after TTL");
         let cache = CertificateCache::new(100, Duration::from_millis(1));
 
         let (cert, key) = generate_test_cert("example.com");
         cache.put("example.com".to_string(), cert, key);
 
-        // Wait for expiration
         std::thread::sleep(Duration::from_millis(10));
 
-        assert!(cache.get("example.com").is_none());
+        t.assert_true("expired entry is None", cache.get("example.com").is_none());
     }
 
     #[test]
     fn test_cache_capacity() {
+        let t = test_report!("Cache LRU eviction at capacity");
         let cache = CertificateCache::new(2, Duration::from_secs(3600));
 
         let (cert1, key1) = generate_test_cert("one.com");
@@ -147,33 +150,34 @@ mod tests {
         cache.put("two.com".to_string(), cert2, key2);
         cache.put("three.com".to_string(), cert3, key3);
 
-        // LRU eviction should have removed "one.com"
-        assert!(cache.get("one.com").is_none());
-        assert!(cache.get("two.com").is_some());
-        assert!(cache.get("three.com").is_some());
+        t.assert_true("one.com evicted", cache.get("one.com").is_none());
+        t.assert_true("two.com present", cache.get("two.com").is_some());
+        t.assert_true("three.com present", cache.get("three.com").is_some());
     }
 
     #[test]
     fn test_cache_len() {
+        let t = test_report!("Cache len and is_empty");
         let cache = CertificateCache::default();
-        assert_eq!(cache.len(), 0);
-        assert!(cache.is_empty());
+        t.assert_eq("initial len", &cache.len(), &0usize);
+        t.assert_true("initially empty", cache.is_empty());
 
         let (cert, key) = generate_test_cert("example.com");
         cache.put("example.com".to_string(), cert, key);
 
-        assert_eq!(cache.len(), 1);
-        assert!(!cache.is_empty());
+        t.assert_eq("len after put", &cache.len(), &1usize);
+        t.assert_true("not empty", !cache.is_empty());
     }
 
     #[test]
     fn test_cache_clear() {
+        let t = test_report!("Cache clear empties cache");
         let cache = CertificateCache::default();
 
         let (cert, key) = generate_test_cert("example.com");
         cache.put("example.com".to_string(), cert, key);
 
         cache.clear();
-        assert!(cache.is_empty());
+        t.assert_true("empty after clear", cache.is_empty());
     }
 }
