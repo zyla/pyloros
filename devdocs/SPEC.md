@@ -126,6 +126,17 @@ These overrides are also exposed as optional config fields (`upstream_override_p
 
 Binary-level smoke tests spawn the actual `redlimitador` binary and drive it with `curl`. They verify end-to-end behavior including config parsing, CLI argument handling, and process lifecycle. The proxy prints its actual listening address to stderr so tests can use `bind_address = "127.0.0.1:0"` and discover the port at runtime. `curl` is configured via the `HTTPS_PROXY` environment variable — the same mechanism real clients use — rather than `--proxy` flags.
 
+### Test Report Generation
+
+Tests produce a human-readable report showing, for each test: what was done, what the result was, and what assertions were checked. The report is generated from **actual test execution** using reporting wrappers that auto-generate descriptions from real parameters (URLs, rules, CLI args), making drift impossible.
+
+- **TestReport**: Each test creates a `TestReport` via the `test_report!()` macro. It records setup steps, actions, and assertion results. On drop, it writes a structured report file to `$TEST_REPORT_DIR/`.
+- **ReportingClient**: Wraps `reqwest::Client` and auto-logs HTTP actions (e.g., `GET https://localhost/test`) from the actual request parameters.
+- **TestProxy/TestUpstream**: Accept `&TestReport` and auto-log setup from actual config (rules, handler description).
+- **Report generator**: `tools/test-report/` is a standalone Rust binary that runs `cargo test` with `TEST_REPORT_DIR` set, collects per-test report files, and generates `test-report.md` (Markdown) and `test-report.html` (HTML with embedded CSS).
+- **Convenience script**: `scripts/test-report.sh` builds and runs the report generator.
+- Output: Markdown + rendered HTML, available locally and as CI artifact.
+
 ## Documentation
 
 The project README (`README.md`) must contain:

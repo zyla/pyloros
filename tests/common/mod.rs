@@ -12,11 +12,265 @@ use redlimitador::tls::{CertificateAuthority, GeneratedCa};
 use redlimitador::{Config, ProxyServer};
 use rustls::pki_types::CertificateDer;
 use rustls::{ClientConfig, ServerConfig};
+use std::fmt::{Debug, Display};
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
+
+// ---------------------------------------------------------------------------
+// TestReport — structured test reporting
+// ---------------------------------------------------------------------------
+
+/// Auto-detect the test name from the calling function.
+/// Must be called from the test function body (not a helper).
+#[macro_export]
+macro_rules! test_report {
+    ($title:expr) => {{
+        fn f() {}
+        fn type_name_of<T>(_: T) -> &'static str {
+            std::any::type_name::<T>()
+        }
+        let name = type_name_of(f);
+        // Strip "::f" suffix
+        let name = &name[..name.len() - 3];
+        $crate::common::TestReport::new(name, $title)
+    }};
+}
+
+enum Step {
+    Setup(String),
+    Action(String),
+    AssertPass(String),
+    AssertFail(String),
+}
+
+impl Step {
+    fn to_report_line(&self) -> String {
+        match self {
+            Step::Setup(msg) => format!("STEP setup: {}", msg),
+            Step::Action(msg) => format!("STEP action: {}", msg),
+            Step::AssertPass(msg) => format!("STEP assert_pass: {}", msg),
+            Step::AssertFail(msg) => format!("STEP assert_fail: {}", msg),
+        }
+    }
+}
+
+pub struct TestReport {
+    full_path: String,
+    title: String,
+    steps: Mutex<Vec<Step>>,
+    report_dir: Option<PathBuf>,
+}
+
+impl TestReport {
+    pub fn new(full_path: &str, title: &str) -> Self {
+        let report_dir = std::env::var("TEST_REPORT_DIR").ok().map(PathBuf::from);
+        Self {
+            full_path: full_path.to_string(),
+            title: title.to_string(),
+            steps: Mutex::new(Vec::new()),
+            report_dir,
+        }
+    }
+
+    pub fn setup(&self, msg: impl Display) {
+        self.steps
+            .lock()
+            .unwrap()
+            .push(Step::Setup(msg.to_string()));
+    }
+
+    pub fn action(&self, msg: impl Display) {
+        self.steps
+            .lock()
+            .unwrap()
+            .push(Step::Action(msg.to_string()));
+    }
+
+    pub fn assert_eq<A, E>(&self, label: &str, actual: &A, expected: &E)
+    where
+        A: PartialEq<E> + Debug,
+        E: Debug,
+    {
+        let pass = actual == expected;
+        let msg = format!("{}: {:?} == {:?}", label, actual, expected);
+        self.steps.lock().unwrap().push(if pass {
+            Step::AssertPass(msg)
+        } else {
+            Step::AssertFail(msg.clone())
+        });
+        assert_eq!(actual, expected, "{}", label);
+    }
+
+    pub fn assert_contains(&self, label: &str, haystack: &str, needle: &str) {
+        let pass = haystack.contains(needle);
+        let msg = format!("{}: {:?} contains {:?}", label, haystack, needle);
+        self.steps.lock().unwrap().push(if pass {
+            Step::AssertPass(msg)
+        } else {
+            Step::AssertFail(msg.clone())
+        });
+        assert!(
+            pass,
+            "{}: {:?} does not contain {:?}",
+            label, haystack, needle
+        );
+    }
+
+    pub fn assert_not_contains(&self, label: &str, haystack: &str, needle: &str) {
+        let pass = !haystack.contains(needle);
+        let msg = format!("{}: {:?} does not contain {:?}", label, haystack, needle);
+        self.steps.lock().unwrap().push(if pass {
+            Step::AssertPass(msg)
+        } else {
+            Step::AssertFail(msg.clone())
+        });
+        assert!(
+            pass,
+            "{}: {:?} should not contain {:?}",
+            label, haystack, needle
+        );
+    }
+
+    pub fn assert_true(&self, label: &str, value: bool) {
+        let msg = format!("{}: {}", label, value);
+        self.steps.lock().unwrap().push(if value {
+            Step::AssertPass(msg)
+        } else {
+            Step::AssertFail(msg.clone())
+        });
+        assert!(value, "{}", label);
+    }
+
+    pub fn assert_starts_with(&self, label: &str, value: &str, prefix: &str) {
+        let pass = value.starts_with(prefix);
+        let msg = format!("{}: {:?} starts with {:?}", label, value, prefix);
+        self.steps.lock().unwrap().push(if pass {
+            Step::AssertPass(msg)
+        } else {
+            Step::AssertFail(msg.clone())
+        });
+        assert!(
+            pass,
+            "{}: {:?} does not start with {:?}",
+            label, value, prefix
+        );
+    }
+
+    /// Extract the group name (test file module) from the full path.
+    fn group(&self) -> &str {
+        // full_path looks like "proxy_basic_test::test_foo" or
+        // "crate_name::proxy_basic_test::test_foo"
+        // We want the second-to-last segment.
+        let parts: Vec<&str> = self.full_path.split("::").collect();
+        if parts.len() >= 2 {
+            parts[parts.len() - 2]
+        } else {
+            &self.full_path
+        }
+    }
+
+    /// Extract the test name (last segment) from the full path.
+    fn name(&self) -> &str {
+        self.full_path
+            .rsplit("::")
+            .next()
+            .unwrap_or(&self.full_path)
+    }
+
+    fn write_report(&self) {
+        let Some(dir) = &self.report_dir else {
+            return;
+        };
+
+        let panicking = std::thread::panicking();
+        let result = if panicking { "fail" } else { "pass" };
+
+        let steps = self.steps.lock().unwrap();
+        let mut lines = Vec::new();
+        lines.push(format!("GROUP: {}", self.group()));
+        lines.push(format!("NAME: {}", self.name()));
+        lines.push(format!("TITLE: {}", self.title));
+        for step in steps.iter() {
+            lines.push(step.to_report_line());
+        }
+        lines.push(format!("RESULT: {}", result));
+        lines.push(String::new()); // trailing newline
+
+        let sanitized = self.full_path.replace("::", "__");
+        let path = dir.join(format!("{}.txt", sanitized));
+        let _ = std::fs::create_dir_all(dir);
+        let _ = std::fs::write(path, lines.join("\n"));
+    }
+}
+
+impl Drop for TestReport {
+    fn drop(&mut self) {
+        self.write_report();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ReportingClient — HTTP client that auto-logs actions to TestReport
+// ---------------------------------------------------------------------------
+
+pub struct ReportingClient<'a> {
+    inner: reqwest::Client,
+    report: &'a TestReport,
+}
+
+impl<'a> ReportingClient<'a> {
+    pub fn new(report: &'a TestReport, proxy_addr: SocketAddr, ca: &TestCa) -> Self {
+        Self {
+            inner: test_client(proxy_addr, ca),
+            report,
+        }
+    }
+
+    pub fn new_h1_only(report: &'a TestReport, proxy_addr: SocketAddr, ca: &TestCa) -> Self {
+        Self {
+            inner: test_client_h1_only(proxy_addr, ca),
+            report,
+        }
+    }
+
+    pub async fn get(&self, url: &str) -> reqwest::Response {
+        self.report.action(format!("GET {}", url));
+        self.inner.get(url).send().await.unwrap()
+    }
+
+    pub async fn post(&self, url: &str) -> reqwest::Response {
+        self.report.action(format!("POST {}", url));
+        self.inner.post(url).send().await.unwrap()
+    }
+
+    pub async fn request(&self, method: reqwest::Method, url: &str) -> reqwest::Response {
+        self.report.action(format!("{} {}", method, url));
+        self.inner
+            .request(method, url.parse::<reqwest::Url>().unwrap())
+            .send()
+            .await
+            .unwrap()
+    }
+
+    pub async fn get_with_header(&self, url: &str, key: &str, val: &str) -> reqwest::Response {
+        self.report.action(format!("GET {} [{}:{}]", url, key, val));
+        self.inner.get(url).header(key, val).send().await.unwrap()
+    }
+
+    /// Access the raw inner client for cases where wrappers don't suffice.
+    pub fn inner(&self) -> &reqwest::Client {
+        &self.inner
+    }
+
+    /// Access the report for manual step recording.
+    pub fn report(&self) -> &'a TestReport {
+        self.report
+    }
+}
 
 // ---------------------------------------------------------------------------
 // TestCa
@@ -120,16 +374,50 @@ impl TestUpstream {
         Self::start_for_host(ca, "localhost", handler).await
     }
 
+    /// Start a test upstream with reporting.
+    pub async fn start_reported(
+        report: &TestReport,
+        ca: &TestCa,
+        handler: UpstreamHandler,
+        handler_desc: &str,
+    ) -> Self {
+        report.setup(format!("Upstream: {}", handler_desc));
+        Self::start(ca, handler).await
+    }
+
     /// Start a test upstream HTTPS server with a cert for the given hostname (h2 + h1).
     pub async fn start_for_host(ca: &TestCa, hostname: &str, handler: UpstreamHandler) -> Self {
         let server_config = ca.server_tls_config(hostname);
         Self::start_with_config(server_config, handler).await
     }
 
+    /// Start a test upstream for a given hostname with reporting.
+    pub async fn start_for_host_reported(
+        report: &TestReport,
+        ca: &TestCa,
+        hostname: &str,
+        handler: UpstreamHandler,
+        handler_desc: &str,
+    ) -> Self {
+        report.setup(format!("Upstream ({}): {}", hostname, handler_desc));
+        Self::start_for_host(ca, hostname, handler).await
+    }
+
     /// Start a test upstream HTTPS server that only speaks HTTP/1.1.
     pub async fn start_h1_only(ca: &TestCa, handler: UpstreamHandler) -> Self {
         let server_config = ca.server_tls_config_h1_only("localhost");
         Self::start_with_config(server_config, handler).await
+    }
+
+    /// Start an H1-only test upstream with reporting.
+    pub async fn start_h1_only_reported(
+        report: &TestReport,
+        ca: &TestCa,
+        handler: UpstreamHandler,
+        handler_desc: &str,
+    ) -> Self {
+        report.setup(format!("Upstream (h1 only): {}", handler_desc));
+        Self::start_h1_only(ca, handler).await
     }
 
     async fn start_with_config(server_config: Arc<ServerConfig>, handler: UpstreamHandler) -> Self {
@@ -249,6 +537,37 @@ pub struct TestProxy {
 impl TestProxy {
     /// Start a proxy configured with the given CA, rules, and upstream override.
     pub async fn start(
+        ca: &TestCa,
+        rules: Vec<redlimitador::config::Rule>,
+        upstream_port: u16,
+    ) -> Self {
+        Self::start_inner(ca, rules, upstream_port).await
+    }
+
+    /// Start a proxy with reporting.
+    pub async fn start_reported(
+        report: &TestReport,
+        ca: &TestCa,
+        rules: Vec<redlimitador::config::Rule>,
+        upstream_port: u16,
+    ) -> Self {
+        let desc = rules
+            .iter()
+            .map(|r| {
+                format!(
+                    "`{} {}`{}",
+                    r.method,
+                    r.url,
+                    if r.websocket { " [ws]" } else { "" }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        report.setup(format!("Proxy with rules: [{}]", desc));
+        Self::start_inner(ca, rules, upstream_port).await
+    }
+
+    async fn start_inner(
         ca: &TestCa,
         rules: Vec<redlimitador::config::Rule>,
         upstream_port: u16,
