@@ -118,16 +118,15 @@ fn parse_listening_port(line: &str) -> Option<u16> {
     addr_str[colon + 1..].parse().ok()
 }
 
-/// Run curl through the proxy. Returns (status_code, body, stderr).
+/// Run curl through the proxy via HTTPS_PROXY env var. Returns (status_code, body, stderr).
 fn curl_get(proxy_port: u16, url: &str, ca_cert_path: &str) -> (u16, String, String) {
-    let proxy_addr = format!("http://127.0.0.1:{}", proxy_port);
+    let proxy_url = format!("http://127.0.0.1:{}", proxy_port);
 
     let output = Command::new("curl")
+        .env("HTTPS_PROXY", &proxy_url)
         .args([
             "-s",
             "-S",
-            "--proxy",
-            &proxy_addr,
             "--cacert",
             ca_cert_path,
             "-w",
