@@ -22,6 +22,27 @@ cargo run -- generate-ca --out ./certs/                  # Generate CA cert/key
 cargo run -- validate-config --config config.toml        # Validate config
 ```
 
+## Development process
+
+We're developing this very incrementally. Start simple, don't overcomplicate, leave corner cases for later.
+
+IMPORTANT: Maintain progress in devdocs/TASKS.md.
+
+After context compaction (when conversation history is summarized), reread relevant spec documents to stay on track with requirements and guidelines.
+
+When facing design decisions, do the simpler thing but save it in devdocs/QUESTIONS.md for further consideration.
+
+Any problems encountered with tools (build system, etc.) should also be documented in QUESTIONS.md under "Tool Issues Encountered" for future reference.
+
+Commit after each phase/step is achieved and verified - don't accumulate too many changes before committing. When following a multi-phase plan, commit immediately after each phase passes its verificati
+on tests.
+
+Use e2e tests (and other types if suitable) to verify all functionality you're implementing, don't just wing it.
+
+You can keep refining the spec document as we work and discover new things.
+
+If you receive advice during development, you can add it to this section - will come handy during subsequent iterations.
+
 ## Architecture
 
 Redlimitador is a default-deny allowlist-based HTTPS filtering proxy that uses MITM TLS interception to inspect encrypted traffic. It is designed for controlling AI agent network access.
