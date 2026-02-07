@@ -1,0 +1,218 @@
+# Redlimitador
+
+A default-deny allowlist-based HTTPS filtering proxy for controlling AI agent network access.
+
+## Overview
+
+Redlimitador is an HTTP/HTTPS proxy that blocks all network requests by default and only allows traffic matching explicit allowlist rules. It is designed for environments where AI agents need controlled internet access — the proxy intercepts HTTPS traffic via MITM TLS, inspects the full URL (host, path, query), and enforces method-level allowlist rules.
+
+The intended deployment is **one proxy per VM or container** running an AI agent. All outbound traffic is routed through the proxy via standard `HTTP_PROXY`/`HTTPS_PROXY` environment variables, giving full visibility and control over the agent's network access.
+
+Blocked requests receive HTTP 451 (Unavailable For Legal Reasons).
+
+## Quick Start
+
+### 1. Build
+
+```bash
+cargo build --release
+```
+
+The binary is at `target/release/redlimitador`.
+
+### 2. Generate a CA certificate
+
+```bash
+redlimitador generate-ca --out ./certs/
+```
+
+This creates `certs/ca.crt` and `certs/ca.key`.
+
+### 3. Trust the CA
+
+On Ubuntu/Debian:
+
+```bash
+sudo cp certs/ca.crt /usr/local/share/ca-certificates/redlimitador.crt
+sudo update-ca-certificates
+```
+
+### 4. Create a configuration file
+
+```toml
+[proxy]
+bind_address = "127.0.0.1:8080"
+ca_cert = "./certs/ca.crt"
+ca_key = "./certs/ca.key"
+
+[logging]
+level = "info"
+log_requests = { allowed = true, blocked = true }
+
+# Allow GitHub API access
+[[rules]]
+method = "*"
+url = "https://api.github.com/*"
+
+# Allow GitHub raw content
+[[rules]]
+method = "GET"
+url = "https://raw.githubusercontent.com/*"
+```
+
+See [`examples/basic_config.toml`](examples/basic_config.toml) for a more complete example.
+
+### 5. Start the proxy
+
+```bash
+redlimitador run --config config.toml
+```
+
+### 6. Configure the client
+
+```bash
+export HTTP_PROXY=http://127.0.0.1:8080
+export HTTPS_PROXY=http://127.0.0.1:8080
+```
+
+### 7. Test it
+
+```bash
+# Should succeed (matches a rule)
+curl https://api.github.com/zen
+
+# Should fail with 451 (no matching rule)
+curl https://example.com/
+```
+
+## Configuration
+
+Configuration uses TOML format. Pass it via `--config` or set values with CLI flags.
+
+### `[proxy]`
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `bind_address` | No | `127.0.0.1:8080` | Address and port to listen on |
+| `ca_cert` | Yes | — | Path to CA certificate PEM file |
+| `ca_key` | Yes | — | Path to CA private key PEM file |
+
+### `[logging]`
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `level` | No | `info` | Log level: `error`, `warn`, `info`, `debug`, `trace` |
+| `log_requests` | No | `true` | Log individual requests. Accepts a bool or a table: `{ allowed = true, blocked = false }` |
+
+### `[[rules]]`
+
+Each rule defines an allowed request pattern. A request must match **at least one rule** to be permitted; everything else is blocked.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `method` | Yes | HTTP method (`GET`, `POST`, etc.) or `*` for any method |
+| `url` | Yes | URL pattern. `*` wildcard matches any sequence of characters (including across path segments) |
+| `websocket` | No | Set to `true` to allow WebSocket upgrades to this URL |
+
+URL patterns use `https://` for HTTPS and `wss://` for WebSocket (treated as `https://` for matching).
+
+**Examples:**
+
+```toml
+# Exact URL
+[[rules]]
+method = "GET"
+url = "https://api.example.com/health"
+
+# Wildcard host and path
+[[rules]]
+method = "*"
+url = "https://*.github.com/*"
+
+# Wildcard in path segment
+[[rules]]
+method = "GET"
+url = "https://api.example.com/users/*/profile"
+
+# Query parameter matching
+[[rules]]
+method = "GET"
+url = "https://api.example.com/search?q=*"
+
+# WebSocket
+[[rules]]
+method = "GET"
+url = "wss://realtime.example.com/events"
+websocket = true
+```
+
+## CLI Reference
+
+### `run` — Start the proxy server
+
+```
+redlimitador run [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| `-c, --config <PATH>` | Path to configuration file |
+| `--ca-cert <PATH>` | Path to CA certificate (overrides config) |
+| `--ca-key <PATH>` | Path to CA private key (overrides config) |
+| `-b, --bind <ADDR>` | Bind address (overrides config) |
+| `-l, --log-level <LEVEL>` | Log level: error, warn, info, debug, trace (default: info) |
+
+### `generate-ca` — Generate a CA certificate and key
+
+```
+redlimitador generate-ca [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| `-o, --out <DIR>` | Output directory (default: current directory) |
+| `--cert-name <NAME>` | Certificate filename (default: `ca.crt`) |
+| `--key-name <NAME>` | Key filename (default: `ca.key`) |
+
+### `validate-config` — Validate a configuration file
+
+```
+redlimitador validate-config --config <PATH>
+```
+
+| Flag | Description |
+|------|-------------|
+| `-c, --config <PATH>` | Path to configuration file (required) |
+
+## Building from Source
+
+Prerequisites: [Rust](https://www.rust-lang.org/tools/install) (stable toolchain).
+
+```bash
+git clone https://github.com/zyla/redlimitador.git
+cd redlimitador
+cargo build --release
+```
+
+The compiled binary is at `target/release/redlimitador`.
+
+## Running Tests
+
+```bash
+cargo test                    # Run all tests
+cargo test --lib              # Unit tests only
+cargo test --test proxy_basic_test  # Specific test file
+cargo clippy                  # Lint
+cargo fmt --check             # Check formatting
+```
+
+Test coverage (requires one-time setup: `rustup component add llvm-tools-preview && cargo install cargo-llvm-cov`):
+
+```bash
+cargo llvm-cov                # Text summary
+cargo llvm-cov --html         # HTML report in coverage/
+```
+
+## License
+
+MIT
