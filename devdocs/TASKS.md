@@ -30,3 +30,6 @@ Dear agent, track progress here
   - [x] Custom deserialization for backward-compatible bool or granular table form
   - [x] Plumb both bools through handler, tunnel, and server
   - [x] E2e test for granular logging config
+- [x] CLI integration tests (`validate-config`, `generate-ca`)
+  - [x] validate-config: valid minimal, valid with rules, invalid TOML, nonexistent file, invalid rule pattern
+  - [x] generate-ca: default output, custom cert/key names, auto-create output dir, PEM validation
