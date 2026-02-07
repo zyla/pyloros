@@ -2,6 +2,12 @@
 
 A default-deny allowlist-based HTTPS filtering proxy for controlling AI agent network access.
 
+## Purpose of this document
+
+It is a declarative specification of what we want this product to be (including technical choices). We do code changes based on this document, not willy-nilly.
+Code should ultimately be maintained to match the requirements here.
+When we want to change something in the product, we first modify the SPEC.
+
 ## Features
 
 ### Core
