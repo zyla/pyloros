@@ -335,7 +335,7 @@ pub fn rule(method: &str, url: &str) -> redlimitador::config::Rule {
 
 pub fn ws_rule(url: &str) -> redlimitador::config::Rule {
     redlimitador::config::Rule {
-        method: String::new(),
+        method: "GET".to_string(),
         url: url.to_string(),
         websocket: true,
     }
