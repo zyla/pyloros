@@ -229,3 +229,47 @@ async fn test_websocket_upstream_rejects() {
     proxy.shutdown();
     upstream.shutdown();
 }
+
+// ---------------------------------------------------------------------------
+// Group 4: Control frames
+// ---------------------------------------------------------------------------
+
+/// Ping frames are forwarded through the proxy tunnel; upstream tungstenite
+/// auto-responds with a Pong carrying the same payload.
+#[tokio::test]
+async fn test_websocket_ping_pong() {
+    let ca = TestCa::generate();
+    let upstream = TestUpstream::start(&ca, ws_echo_handler()).await;
+    let proxy = TestProxy::start(&ca, vec![ws_rule("wss://localhost/*")], upstream.port()).await;
+
+    let mut ws = ws_connect_through_proxy(proxy.addr(), &ca, "/ping").await;
+
+    // Send a Ping control frame
+    ws.send(Message::Ping(b"ping-payload".to_vec().into()))
+        .await
+        .unwrap();
+
+    // Send a Text message to trigger the upstream to flush its auto-pong
+    ws.send(Message::Text("hello".into())).await.unwrap();
+
+    // Collect the next 2 messages — expect Pong + Text echo (order not guaranteed)
+    let mut received = Vec::new();
+    for _ in 0..2 {
+        let msg = ws.next().await.unwrap().unwrap();
+        received.push(msg);
+    }
+
+    let has_pong = received.iter().any(|m| match m {
+        Message::Pong(data) => data.as_ref() == b"ping-payload",
+        _ => false,
+    });
+    let has_echo = received.iter().any(|m| *m == Message::Text("hello".into()));
+
+    assert!(has_pong, "Expected Pong with payload, got: {:?}", received);
+    assert!(has_echo, "Expected Text echo, got: {:?}", received);
+
+    // Clean close
+    ws.close(None).await.unwrap();
+    proxy.shutdown();
+    upstream.shutdown();
+}
