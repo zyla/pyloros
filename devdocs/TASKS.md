@@ -24,3 +24,4 @@ Dear agent, track progress here
   - [x] Branch on `is_websocket` in `handle_tunneled_request()`
   - [x] Test infrastructure: `ws_echo_handler()`, `ws_rule()`, `.with_upgrades()` on TestUpstream
   - [x] E2E tests: echo, blocked, multiple messages, binary, upstream rejection
+- [x] Add e2e test for CONNECT port 443 restriction (non-443 blocked with 451)
