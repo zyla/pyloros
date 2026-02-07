@@ -514,3 +514,50 @@ async fn test_h2_large_body() {
     proxy.shutdown();
     upstream.shutdown();
 }
+
+// ---------------------------------------------------------------------------
+// CONNECT port restriction tests
+// ---------------------------------------------------------------------------
+
+/// CONNECT to a non-443 port is blocked with 451.
+#[tokio::test]
+async fn test_connect_non_443_port_blocked() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+
+    let ca = TestCa::generate();
+    let upstream = TestUpstream::start(&ca, ok_handler("should not reach")).await;
+
+    let proxy =
+        TestProxy::start(&ca, vec![rule("*", "https://localhost/*")], upstream.port()).await;
+
+    // Raw TCP connect to proxy, send CONNECT with non-443 port
+    let mut tcp = TcpStream::connect(proxy.addr()).await.unwrap();
+    let connect_req = "CONNECT localhost:8080 HTTP/1.1\r\nHost: localhost:8080\r\n\r\n";
+    tcp.write_all(connect_req.as_bytes()).await.unwrap();
+
+    // Read response
+    let mut buf = [0u8; 4096];
+    let n = tcp.read(&mut buf).await.unwrap();
+    let response = String::from_utf8_lossy(&buf[..n]);
+
+    // Should be blocked with 451
+    assert!(
+        response.starts_with("HTTP/1.1 451"),
+        "Expected 451 response, got: {}",
+        response
+    );
+    assert!(
+        response.contains("X-Blocked-By: redlimitador"),
+        "Expected X-Blocked-By header, got: {}",
+        response
+    );
+    assert!(
+        response.contains("Only HTTPS connections are allowed"),
+        "Expected blocking reason in body, got: {}",
+        response
+    );
+
+    proxy.shutdown();
+    upstream.shutdown();
+}
