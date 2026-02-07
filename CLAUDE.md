@@ -34,8 +34,7 @@ When facing design decisions, do the simpler thing but save it in devdocs/QUESTI
 
 Any problems encountered with tools (build system, etc.) should also be documented in QUESTIONS.md under "Tool Issues Encountered" for future reference.
 
-Commit after each phase/step is achieved and verified - don't accumulate too many changes before committing. When following a multi-phase plan, commit immediately after each phase passes its verificati
-on tests.
+Commit after each phase/step is achieved and verified - don't accumulate too many changes before committing. When following a multi-phase plan, commit immediately after each phase passes its verification tests. When a piece of work is done and tested, commit immediately - don't wait for explicit instruction.
 
 Use e2e tests (and other types if suitable) to verify all functionality you're implementing, don't just wing it.
 
