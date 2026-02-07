@@ -17,6 +17,8 @@ The intended deployment is one proxy per VM/container running an AI agent. All o
 ### Core
 - Explicit HTTP proxy mode (clients configured via `HTTP_PROXY`/`HTTPS_PROXY` env vars)
 - MITM TLS interception for HTTPS traffic via CONNECT tunnels
+- Plain HTTP forwarding for non-CONNECT proxy requests (e.g. `http://` URLs used by apt-get)
+- Hop-by-hop header stripping per RFC 7230 for forwarded HTTP requests
 - CONNECT restricted to port 443 (non-443 CONNECT requests are blocked)
 - Allowlist rule engine: requests must match at least one rule to be allowed; everything else is blocked with HTTP 451
 - TOML configuration file

@@ -4,7 +4,9 @@ use bytes::Bytes;
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::body::Incoming;
 use hyper::{Method, Request, Response, StatusCode};
+use hyper_util::rt::TokioIo;
 use std::sync::Arc;
+use tokio::net::TcpStream;
 
 use super::tunnel::TunnelHandler;
 use crate::filter::{FilterEngine, RequestInfo};
@@ -112,12 +114,12 @@ impl ProxyHandler {
         let method = req.method().to_string();
 
         let scheme = uri.scheme_str().unwrap_or("http");
-        let host = uri.host().unwrap_or("unknown");
+        let host = uri.host().unwrap_or("unknown").to_string();
         let port = uri.port_u16();
         let path = uri.path();
         let query = uri.query();
 
-        let request_info = RequestInfo::http(&method, scheme, host, port, path, query);
+        let request_info = RequestInfo::http(&method, scheme, &host, port, path, query);
         let full_url = request_info.full_url();
 
         // Check filter
@@ -144,20 +146,99 @@ impl ProxyHandler {
             );
         }
 
-        // For plain HTTP, we could forward the request
-        // But since we're focused on HTTPS, return an error for now
-        Ok(Response::builder()
-            .status(StatusCode::NOT_IMPLEMENTED)
-            .header("Content-Type", "text/plain")
-            .body(
-                Full::new(Bytes::from(
-                    "Plain HTTP forwarding not implemented. Use HTTPS.\n",
-                ))
-                .map_err(|e| match e {})
-                .boxed(),
-            )
-            .unwrap())
+        let upstream_port = port.unwrap_or(80);
+        match forward_http_request(&host, upstream_port, req).await {
+            Ok(resp) => Ok(resp),
+            Err(e) => {
+                tracing::error!(host = %host, port = %upstream_port, error = %e, "HTTP forwarding error");
+                Ok(error_response(&e.to_string()))
+            }
+        }
     }
+}
+
+/// Hop-by-hop headers that must not be forwarded (RFC 7230 §6.1).
+const HOP_BY_HOP_HEADERS: &[&str] = &[
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "proxy-connection",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+];
+
+/// Forward a plain HTTP request to the upstream server.
+async fn forward_http_request(
+    host: &str,
+    port: u16,
+    req: Request<Incoming>,
+) -> Result<Response<BoxBody<Bytes, hyper::Error>>, Box<dyn std::error::Error + Send + Sync>> {
+    // Connect to upstream
+    let addr = format!("{}:{}", host, port);
+    let tcp = TcpStream::connect(&addr).await?;
+    let io = TokioIo::new(tcp);
+
+    // HTTP/1.1 handshake
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await?;
+
+    // Spawn connection driver
+    tokio::spawn(async move {
+        if let Err(e) = conn.await {
+            let err_str = e.to_string();
+            if !err_str.contains("connection closed") && !err_str.contains("early eof") {
+                tracing::error!(error = %e, "HTTP upstream connection error");
+            }
+        }
+    });
+
+    // Rebuild request: relative URI, strip hop-by-hop headers, ensure Host header
+    let (parts, body) = req.into_parts();
+
+    let path_and_query = parts
+        .uri
+        .path_and_query()
+        .map(|pq| pq.as_str())
+        .unwrap_or("/");
+    let new_uri: hyper::Uri = path_and_query.parse()?;
+
+    let mut builder = Request::builder().method(parts.method).uri(new_uri);
+
+    // Copy headers, stripping hop-by-hop
+    for (name, value) in &parts.headers {
+        let name_lower = name.as_str().to_lowercase();
+        if !HOP_BY_HOP_HEADERS.contains(&name_lower.as_str()) {
+            builder = builder.header(name, value);
+        }
+    }
+
+    // Ensure Host header is present
+    if !parts.headers.contains_key(hyper::header::HOST) {
+        if port == 80 {
+            builder = builder.header(hyper::header::HOST, host);
+        } else {
+            builder = builder.header(hyper::header::HOST, format!("{}:{}", host, port));
+        }
+    }
+
+    let upstream_req = builder.body(body)?;
+    let resp = sender.send_request(upstream_req).await?;
+
+    // Map the response body to BoxBody
+    Ok(resp.map(|b| b.boxed()))
+}
+
+/// Create an HTTP 502 Bad Gateway error response.
+fn error_response(message: &str) -> Response<BoxBody<Bytes, hyper::Error>> {
+    let body = format!("Proxy error: {}\n", message);
+
+    Response::builder()
+        .status(StatusCode::BAD_GATEWAY)
+        .header("Content-Type", "text/plain")
+        .body(Full::new(Bytes::from(body)).map_err(|e| match e {}).boxed())
+        .unwrap()
 }
 
 /// Create an HTTP 451 response for blocked requests
