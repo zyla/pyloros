@@ -6,12 +6,16 @@ A default-deny allowlist-based HTTPS filtering proxy for controlling AI agent ne
 
 It is a declarative specification of what we want this product to be: features, technical choices (libraries, protocols, testing strategy), and configuration format. Code should ultimately be maintained to match the requirements here. When we want to change something in the product, we first modify the SPEC.
 
+## Deployment Model
+
+The intended deployment is one proxy per VM/container running an AI agent. All outbound traffic from the agent is routed through the proxy via `HTTP_PROXY`/`HTTPS_PROXY` environment variables, giving the proxy full visibility and control over the agent's network access.
+
 ## Features
 
 > **Status convention:** All features are implemented and tested unless marked with `(planned)`. Remove the marker once implemented. Agents: scan for `(planned)` to find remaining work.
 
 ### Core
-- Explicit HTTP proxy mode (clients set `HTTP_PROXY`/`HTTPS_PROXY`)
+- Explicit HTTP proxy mode (clients configured via `HTTP_PROXY`/`HTTPS_PROXY` env vars)
 - MITM TLS interception for HTTPS traffic via CONNECT tunnels
 - CONNECT restricted to port 443 (non-443 CONNECT requests are blocked)
 - Allowlist rule engine: requests must match at least one rule to be allowed; everything else is blocked with HTTP 451
