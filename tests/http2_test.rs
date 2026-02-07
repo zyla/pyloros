@@ -1,9 +1,6 @@
 mod common;
 
-use common::{
-    ok_handler, rule, test_client, test_client_h1_only, TestCa, TestProxy, TestUpstream,
-    UpstreamHandler,
-};
+use common::{ok_handler, rule, ReportingClient, TestCa, TestProxy, TestUpstream, UpstreamHandler};
 
 // ---------------------------------------------------------------------------
 // HTTP/2 tests
@@ -12,22 +9,33 @@ use common::{
 /// Default client (h2-capable) talks to h2-capable upstream — response uses HTTP/2.
 #[tokio::test]
 async fn test_h2_allowed_request() {
-    let ca = TestCa::generate();
-    let upstream = TestUpstream::start(&ca, ok_handler("h2 hello")).await;
+    let t = test_report!("HTTP/2 allowed request");
 
-    let proxy = TestProxy::start(
+    let ca = TestCa::generate();
+    let upstream =
+        TestUpstream::start_reported(&t, &ca, ok_handler("h2 hello"), "returns 'h2 hello'").await;
+    let proxy = TestProxy::start_reported(
+        &t,
         &ca,
         vec![rule("GET", "https://localhost/*")],
         upstream.port(),
     )
     .await;
 
-    let client = test_client(proxy.addr(), &ca);
-    let resp = client.get("https://localhost/h2").send().await.unwrap();
+    let client = ReportingClient::new(&t, proxy.addr(), &ca);
+    let resp = client.get("https://localhost/h2").await;
 
-    assert_eq!(resp.status(), 200);
-    assert_eq!(resp.version(), reqwest::Version::HTTP_2);
-    assert_eq!(resp.text().await.unwrap(), "h2 hello");
+    t.assert_eq("Response status", &resp.status().as_u16(), &200u16);
+    t.assert_eq(
+        "HTTP version",
+        &format!("{:?}", resp.version()),
+        &"HTTP/2.0",
+    );
+    t.assert_eq(
+        "Response body",
+        &resp.text().await.unwrap().as_str(),
+        &"h2 hello",
+    );
 
     proxy.shutdown();
     upstream.shutdown();
@@ -36,23 +44,34 @@ async fn test_h2_allowed_request() {
 /// HTTP/1.1-only client talks to h2-capable upstream — proxy translates protocol.
 #[tokio::test]
 async fn test_h1_client_to_h2_upstream() {
-    let ca = TestCa::generate();
-    let upstream = TestUpstream::start(&ca, ok_handler("translated")).await;
+    let t = test_report!("H1 client to H2 upstream protocol translation");
 
-    let proxy = TestProxy::start(
+    let ca = TestCa::generate();
+    let upstream =
+        TestUpstream::start_reported(&t, &ca, ok_handler("translated"), "returns 'translated'")
+            .await;
+    let proxy = TestProxy::start_reported(
+        &t,
         &ca,
         vec![rule("GET", "https://localhost/*")],
         upstream.port(),
     )
     .await;
 
-    // h1-only client forces HTTP/1.1 on client side
-    let client = test_client_h1_only(proxy.addr(), &ca);
-    let resp = client.get("https://localhost/test").send().await.unwrap();
+    let client = ReportingClient::new_h1_only(&t, proxy.addr(), &ca);
+    let resp = client.get("https://localhost/test").await;
 
-    assert_eq!(resp.status(), 200);
-    assert_eq!(resp.version(), reqwest::Version::HTTP_11);
-    assert_eq!(resp.text().await.unwrap(), "translated");
+    t.assert_eq("Response status", &resp.status().as_u16(), &200u16);
+    t.assert_eq(
+        "HTTP version",
+        &format!("{:?}", resp.version()),
+        &"HTTP/1.1",
+    );
+    t.assert_eq(
+        "Response body",
+        &resp.text().await.unwrap().as_str(),
+        &"translated",
+    );
 
     proxy.shutdown();
     upstream.shutdown();
@@ -61,23 +80,34 @@ async fn test_h1_client_to_h2_upstream() {
 /// h2-capable client talks to h1-only upstream — proxy translates protocol.
 #[tokio::test]
 async fn test_h2_client_to_h1_upstream() {
-    let ca = TestCa::generate();
-    let upstream = TestUpstream::start_h1_only(&ca, ok_handler("h1 only")).await;
+    let t = test_report!("H2 client to H1-only upstream protocol translation");
 
-    let proxy = TestProxy::start(
+    let ca = TestCa::generate();
+    let upstream =
+        TestUpstream::start_h1_only_reported(&t, &ca, ok_handler("h1 only"), "returns 'h1 only'")
+            .await;
+    let proxy = TestProxy::start_reported(
+        &t,
         &ca,
         vec![rule("GET", "https://localhost/*")],
         upstream.port(),
     )
     .await;
 
-    let client = test_client(proxy.addr(), &ca);
-    let resp = client.get("https://localhost/test").send().await.unwrap();
+    let client = ReportingClient::new(&t, proxy.addr(), &ca);
+    let resp = client.get("https://localhost/test").await;
 
-    assert_eq!(resp.status(), 200);
-    // Client negotiated h2 with proxy, but upstream is h1 — proxy translates
-    assert_eq!(resp.version(), reqwest::Version::HTTP_2);
-    assert_eq!(resp.text().await.unwrap(), "h1 only");
+    t.assert_eq("Response status", &resp.status().as_u16(), &200u16);
+    t.assert_eq(
+        "HTTP version",
+        &format!("{:?}", resp.version()),
+        &"HTTP/2.0",
+    );
+    t.assert_eq(
+        "Response body",
+        &resp.text().await.unwrap().as_str(),
+        &"h1 only",
+    );
 
     proxy.shutdown();
     upstream.shutdown();
@@ -86,33 +116,40 @@ async fn test_h2_client_to_h1_upstream() {
 /// Blocked request over HTTP/2 returns 451.
 #[tokio::test]
 async fn test_h2_blocked_returns_451() {
-    let ca = TestCa::generate();
-    let upstream = TestUpstream::start(&ca, ok_handler("should not reach")).await;
+    let t = test_report!("Blocked request over HTTP/2 returns 451");
 
-    let proxy = TestProxy::start(
+    let ca = TestCa::generate();
+    let upstream = TestUpstream::start_reported(
+        &t,
+        &ca,
+        ok_handler("should not reach"),
+        "returns 'should not reach'",
+    )
+    .await;
+    let proxy = TestProxy::start_reported(
+        &t,
         &ca,
         vec![rule("GET", "https://example.com/*")],
         upstream.port(),
     )
     .await;
 
-    let client = test_client(proxy.addr(), &ca);
-    let resp = client
-        .get("https://localhost/blocked")
-        .send()
-        .await
-        .unwrap();
+    let client = ReportingClient::new(&t, proxy.addr(), &ca);
+    let resp = client.get("https://localhost/blocked").await;
 
-    assert_eq!(resp.status(), 451);
-    assert_eq!(resp.version(), reqwest::Version::HTTP_2);
-    assert_eq!(
-        resp.headers()
-            .get("X-Blocked-By")
-            .unwrap()
-            .to_str()
-            .unwrap(),
-        "redlimitador"
-    );
+    let status = resp.status().as_u16();
+    let version = format!("{:?}", resp.version());
+    let blocked_by = resp
+        .headers()
+        .get("X-Blocked-By")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    t.assert_eq("Response status", &status, &451u16);
+    t.assert_eq("HTTP version", &version.as_str(), &"HTTP/2.0");
+    t.assert_eq("X-Blocked-By header", &blocked_by.as_str(), &"redlimitador");
 
     proxy.shutdown();
     upstream.shutdown();
@@ -122,6 +159,8 @@ async fn test_h2_blocked_returns_451() {
 #[tokio::test]
 async fn test_h2_large_body() {
     use std::sync::Arc;
+
+    let t = test_report!("Large body over HTTP/2 forwarded intact");
 
     let ca = TestCa::generate();
     let large_body: String = "y".repeat(100_000);
@@ -139,23 +178,26 @@ async fn test_h2_large_body() {
         })
     });
 
-    let upstream = TestUpstream::start(&ca, handler).await;
-
-    let proxy = TestProxy::start(
+    let upstream = TestUpstream::start_reported(&t, &ca, handler, "returns 100KB body").await;
+    let proxy = TestProxy::start_reported(
+        &t,
         &ca,
         vec![rule("GET", "https://localhost/*")],
         upstream.port(),
     )
     .await;
 
-    let client = test_client(proxy.addr(), &ca);
-    let resp = client.get("https://localhost/large").send().await.unwrap();
+    let client = ReportingClient::new(&t, proxy.addr(), &ca);
+    let resp = client.get("https://localhost/large").await;
 
-    assert_eq!(resp.status(), 200);
-    assert_eq!(resp.version(), reqwest::Version::HTTP_2);
+    let status = resp.status().as_u16();
+    let version = format!("{:?}", resp.version());
     let body = resp.text().await.unwrap();
-    assert_eq!(body.len(), expected.len());
-    assert_eq!(body, expected);
+
+    t.assert_eq("Response status", &status, &200u16);
+    t.assert_eq("HTTP version", &version.as_str(), &"HTTP/2.0");
+    t.assert_eq("Body length", &body.len(), &expected.len());
+    t.assert_eq("Body content matches", &body, &expected);
 
     proxy.shutdown();
     upstream.shutdown();
