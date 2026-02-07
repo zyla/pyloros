@@ -68,6 +68,10 @@ subcommands:
 bind_address = "127.0.0.1:8080"
 ca_cert = "/path/to/ca.crt"
 ca_key = "/path/to/ca.key"
+# Optional: override upstream port for all CONNECT forwards (testing only)
+# upstream_override_port = 9443
+# Optional: PEM CA cert to trust for upstream TLS (testing only)
+# upstream_tls_ca = "/path/to/upstream-ca.crt"
 
 [logging]
 level = "info"
@@ -109,3 +113,9 @@ E2e tests exercise the full request flow: client → proxy (MITM) → upstream �
 The proxy binds to port 0 and exposes its actual address via `bind()` / `serve_until_shutdown()` split on `ProxyServer`.
 
 Since CONNECT is restricted to port 443 but test upstreams run on random ports, `TunnelHandler` supports an `upstream_port_override` that redirects forwarded connections to the test upstream's actual port. Similarly, `upstream_tls_config` allows injecting a `rustls::ClientConfig` that trusts the test CA (instead of webpki roots).
+
+These overrides are also exposed as optional config fields (`upstream_override_port`, `upstream_tls_ca`) so that binary-level tests can exercise the real CLI binary with `curl`.
+
+### Binary-Level Tests
+
+Binary-level smoke tests spawn the actual `redlimitador` binary and drive it with `curl`. They verify end-to-end behavior including config parsing, CLI argument handling, and process lifecycle. The proxy prints its actual listening address to stderr so tests can use `bind_address = "127.0.0.1:0"` and discover the port at runtime.
