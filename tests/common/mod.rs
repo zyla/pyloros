@@ -36,8 +36,7 @@ impl TestCa {
     pub fn generate() -> Self {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         let generated = GeneratedCa::generate().unwrap();
-        let ca =
-            CertificateAuthority::from_pem(&generated.cert_pem, &generated.key_pem).unwrap();
+        let ca = CertificateAuthority::from_pem(&generated.cert_pem, &generated.key_pem).unwrap();
         let cert_der = ca.cert_der().clone();
 
         let dir = tempfile::tempdir().unwrap();
@@ -91,10 +90,7 @@ pub type UpstreamHandler =
 pub type UpstreamResponse = std::pin::Pin<
     Box<
         dyn std::future::Future<
-                Output = std::result::Result<
-                    Response<BoxBody<Bytes, hyper::Error>>,
-                    hyper::Error,
-                >,
+                Output = std::result::Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>,
             > + Send,
     >,
 >;
@@ -174,11 +170,7 @@ pub fn ok_handler(body: &'static str) -> UpstreamHandler {
             Ok(Response::builder()
                 .status(StatusCode::OK)
                 .header("Content-Type", "text/plain")
-                .body(
-                    Full::new(Bytes::from(body))
-                        .map_err(|e| match e {})
-                        .boxed(),
-                )
+                .body(Full::new(Bytes::from(body)).map_err(|e| match e {}).boxed())
                 .unwrap())
         })
     })
@@ -208,11 +200,7 @@ pub fn echo_handler() -> UpstreamHandler {
                 .status(StatusCode::OK)
                 .header("Content-Type", "text/plain")
                 .header("X-Echo", "true")
-                .body(
-                    Full::new(Bytes::from(body))
-                        .map_err(|e| match e {})
-                        .boxed(),
-                )
+                .body(Full::new(Bytes::from(body)).map_err(|e| match e {}).boxed())
                 .unwrap())
         })
     })
