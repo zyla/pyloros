@@ -53,9 +53,9 @@ When adding many tests, add them in groups with commit checkpoints — don't wri
 
 ## Worktree Workflow
 
-**Always** use git worktrees for development work so the main working directory stays clean. Do not work directly on main.
+IMPORTANT: NEVER make code changes directly in the main working directory (`/home/zyla.linux/redlimitador`). ALL development work — including during plan mode exploration — MUST happen in a worktree. The very first step of any implementation task is to create a worktree. Do not edit files, run builds, or make commits in the main directory. If you catch yourself about to modify a file in the main directory, STOP and create a worktree first. This applies even for "small" or "trivial" changes.
 
-**Setup:**
+**Setup (do this BEFORE any code changes):**
 
 ```bash
 git branch claude/<feature-slug> main
