@@ -87,3 +87,13 @@ websocket = true
 - Rate limiting
 - Metrics/observability
 - Upstream proxy chaining
+
+## Testing
+
+- unit tests where it makes sense
+- end-to-end integration tests with wiremock
+  - covering all features, including:
+    - different filtering rules
+    - different protocols (http/1.1, http/2, websocket)
+- tests run in Github Actions
+- test coverage is reported
