@@ -169,6 +169,7 @@ impl TestUpstream {
                             if h1_only {
                                 let _ = http1::Builder::new()
                                     .serve_connection(io, service)
+                                    .with_upgrades()
                                     .await;
                             } else {
                                 let _ = auto::Builder::new(TokioExecutor::new())
@@ -330,4 +331,100 @@ pub fn rule(method: &str, url: &str) -> redlimitador::config::Rule {
         url: url.to_string(),
         websocket: false,
     }
+}
+
+pub fn ws_rule(url: &str) -> redlimitador::config::Rule {
+    redlimitador::config::Rule {
+        method: "GET".to_string(),
+        url: url.to_string(),
+        websocket: true,
+    }
+}
+
+/// An upstream handler that accepts WebSocket upgrades and echoes messages back.
+pub fn ws_echo_handler() -> UpstreamHandler {
+    use http_body_util::Empty;
+    use tokio_tungstenite::WebSocketStream;
+
+    Arc::new(|mut req: Request<Incoming>| {
+        Box::pin(async move {
+            // Verify this is a valid websocket upgrade request
+            if !req
+                .headers()
+                .get(hyper::header::UPGRADE)
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| v.to_lowercase().contains("websocket"))
+            {
+                return Ok(Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(
+                        Full::new(Bytes::from("Not a WebSocket request"))
+                            .map_err(|e| match e {})
+                            .boxed(),
+                    )
+                    .unwrap());
+            }
+
+            // Extract the upgrade future before sending the 101 response
+            let on_upgrade = hyper::upgrade::on(&mut req);
+
+            // Derive the Sec-WebSocket-Accept value
+            let ws_key = req
+                .headers()
+                .get("sec-websocket-key")
+                .map(|v| v.to_str().unwrap_or("").to_string())
+                .unwrap_or_default();
+            let accept = tungstenite_accept_key(&ws_key);
+
+            // Spawn the echo task
+            tokio::spawn(async move {
+                let upgraded = match on_upgrade.await {
+                    Ok(u) => u,
+                    Err(e) => {
+                        eprintln!("ws_echo_handler upgrade failed: {}", e);
+                        return;
+                    }
+                };
+
+                let ws = WebSocketStream::from_raw_socket(
+                    TokioIo::new(upgraded),
+                    tokio_tungstenite::tungstenite::protocol::Role::Server,
+                    None,
+                )
+                .await;
+
+                use futures_util::{SinkExt, StreamExt};
+                let (mut tx, mut rx) = ws.split();
+                while let Some(Ok(msg)) = rx.next().await {
+                    if msg.is_close() {
+                        let _ = tx.close().await;
+                        break;
+                    }
+                    if msg.is_text() || msg.is_binary() {
+                        if tx.send(msg).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            });
+
+            // Send 101 Switching Protocols response
+            Ok(Response::builder()
+                .status(StatusCode::SWITCHING_PROTOCOLS)
+                .header(hyper::header::UPGRADE, "websocket")
+                .header(hyper::header::CONNECTION, "Upgrade")
+                .header("Sec-WebSocket-Accept", accept)
+                .body(
+                    Empty::new()
+                        .map_err(|e: std::convert::Infallible| match e {})
+                        .boxed(),
+                )
+                .unwrap())
+        })
+    })
+}
+
+/// Compute the Sec-WebSocket-Accept value from a Sec-WebSocket-Key.
+fn tungstenite_accept_key(key: &str) -> String {
+    tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes())
 }
