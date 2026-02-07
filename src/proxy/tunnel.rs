@@ -3,10 +3,10 @@
 use bytes::Bytes;
 use http_body_util::{combinators::BoxBody, BodyExt, Full};
 use hyper::body::Incoming;
-use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::server::conn::auto;
 use rustls::ClientConfig;
 use std::sync::Arc;
 use tokio::net::TcpStream;
@@ -100,14 +100,12 @@ impl TunnelHandler {
             }
         });
 
-        // Serve HTTP/1.1 over the TLS connection
+        // Serve HTTP/1.1 or HTTP/2 over the TLS connection (auto-detected via ALPN)
         let io = TokioIo::new(client_tls);
-        if let Err(e) = http1::Builder::new()
-            .preserve_header_case(true)
-            .serve_connection(io, service)
-            .with_upgrades()
-            .await
-        {
+        let mut builder = auto::Builder::new(TokioExecutor::new());
+        builder.http1().preserve_header_case(true).half_close(true);
+
+        if let Err(e) = builder.serve_connection_with_upgrades(io, service).await {
             // Connection closed errors are normal
             let err_str = e.to_string();
             if !err_str.contains("connection closed") && !err_str.contains("early eof") {

@@ -76,12 +76,14 @@ impl MitmCertificateGenerator {
         // Build certificate chain: [host cert, CA cert]
         let cert_chain = vec![cert, ca_cert];
 
-        let config = ServerConfig::builder()
+        let mut config = ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(cert_chain, key)
             .map_err(|e| {
                 crate::error::Error::tls(format!("Failed to build server config: {}", e))
             })?;
+
+        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
 
         Ok(config)
     }
@@ -180,7 +182,10 @@ mod tests {
         let gen = create_test_generator();
         let config = gen.server_config_for_host("example.com").unwrap();
 
-        // Verify we got a valid config
-        assert!(config.alpn_protocols.is_empty()); // Default has no ALPN
+        // Verify ALPN is set for h2 + h1
+        assert_eq!(
+            config.alpn_protocols,
+            vec![b"h2".to_vec(), b"http/1.1".to_vec()]
+        );
     }
 }
