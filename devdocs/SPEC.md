@@ -48,7 +48,10 @@ subcommands:
 - Explicit HTTP proxy (no iptables)
 - MITM with CA for HTTPS inspection
 - Tokio async runtime
-- rustls + rcgen for TLS (pure Rust, no OpenSSL)
+- rustls + rcgen for TLS (pure Rust, no OpenSSL). Evaluated shelling out to
+  `openssl` CLI for cert generation — it would only replace ~85 lines of rcgen
+  code while adding a runtime system dependency, fork+exec latency on the
+  per-host hot path, and temp file management. Not worth the tradeoff.
 - TOML config
 - `*` wildcard = multi-segment match
 - HTTP 451 for blocked requests
