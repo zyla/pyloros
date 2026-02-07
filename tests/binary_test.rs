@@ -4,7 +4,7 @@
 mod common;
 
 use common::{ok_handler, TestCa, TestUpstream};
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read as _};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use tempfile::TempDir;
@@ -217,6 +217,160 @@ async fn test_binary_blocked_request_returns_451() {
     child.kill().ok();
     child.wait().ok();
     upstream.shutdown();
+}
+
+/// Generate a TOML config for connecting to real upstream servers (no test overrides).
+fn build_real_config_toml(ca_cert: &str, ca_key: &str, rules: &[(&str, &str)]) -> String {
+    let mut toml = format!(
+        r#"[proxy]
+bind_address = "127.0.0.1:0"
+ca_cert = "{ca_cert}"
+ca_key = "{ca_key}"
+
+[logging]
+level = "info"
+log_requests = true
+
+"#
+    );
+
+    for (method, url) in rules {
+        toml.push_str(&format!(
+            r#"[[rules]]
+method = "{method}"
+url = "{url}"
+
+"#
+        ));
+    }
+
+    toml
+}
+
+/// Run `claude -p "Say hi"` through the proxy, verify it gets a response.
+/// Skipped if `claude` CLI is not installed, not authenticated, or running
+/// inside another Claude Code session (nested sessions hang).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_binary_claude_code_through_proxy() {
+    // Skip if running inside another claude session (nested claude -p hangs)
+    if std::env::var("CLAUDECODE").is_ok() {
+        eprintln!("running inside Claude Code session, skipping");
+        return;
+    }
+
+    // Skip if `claude` not on PATH
+    if Command::new("claude").arg("--version").output().is_err() {
+        eprintln!("claude CLI not found, skipping");
+        return;
+    }
+
+    // Skip if not authenticated
+    let home = std::env::var("HOME").expect("HOME not set");
+    let creds_path = std::path::PathBuf::from(&home).join(".claude/.credentials.json");
+    if !creds_path.exists() {
+        eprintln!("claude not authenticated (~/.claude/.credentials.json missing), skipping");
+        return;
+    }
+
+    let ca = TestCa::generate();
+
+    let tmp = TempDir::new().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    let config_toml = build_real_config_toml(
+        &ca.cert_path,
+        &ca.key_path,
+        &[
+            ("*", "https://api.anthropic.com/*"),
+            ("*", "https://statsig.anthropic.com/*"),
+            ("*", "https://sentry.io/*"),
+            ("*", "https://*.sentry.io/*"),
+        ],
+    );
+    std::fs::write(&config_path, &config_toml).unwrap();
+
+    let (mut child, proxy_port) = spawn_proxy(&config_path);
+
+    let proxy_url = format!("http://127.0.0.1:{}", proxy_port);
+    let mut claude_child = Command::new("claude")
+        .args([
+            "-p",
+            "Say hi",
+            "--model",
+            "claude-haiku-4-5-20251001",
+            "--max-turns",
+            "1",
+        ])
+        .env("HTTPS_PROXY", &proxy_url)
+        .env("NODE_EXTRA_CA_CERTS", &ca.cert_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn claude");
+
+    let claude_pid = claude_child.id();
+
+    // Wait with a 60-second timeout
+    let timeout = std::time::Duration::from_secs(60);
+    let start = std::time::Instant::now();
+    let status = loop {
+        match claude_child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if start.elapsed() > timeout {
+                    claude_child.kill().ok();
+                    claude_child.wait().ok();
+                    child.kill().ok();
+                    child.wait().ok();
+                    panic!(
+                        "claude CLI timed out after {:?} (pid {})",
+                        timeout, claude_pid
+                    );
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            Err(e) => panic!("error waiting for claude: {}", e),
+        }
+    };
+
+    let stdout = {
+        let mut buf = Vec::new();
+        claude_child
+            .stdout
+            .take()
+            .unwrap()
+            .read_to_end(&mut buf)
+            .unwrap();
+        String::from_utf8_lossy(&buf).to_string()
+    };
+    let stderr = {
+        let mut buf = Vec::new();
+        claude_child
+            .stderr
+            .take()
+            .unwrap()
+            .read_to_end(&mut buf)
+            .unwrap();
+        String::from_utf8_lossy(&buf).to_string()
+    };
+
+    assert!(
+        status.success(),
+        "claude exited with {}\nstdout: {}\nstderr: {}",
+        status,
+        stdout,
+        stderr,
+    );
+    assert!(
+        !stdout.trim().is_empty(),
+        "claude produced empty output\nstderr: {}",
+        stderr,
+    );
+
+    eprintln!("claude response: {}", stdout.trim());
+
+    child.kill().ok();
+    child.wait().ok();
 }
 
 /// Run `generate-ca --out <tmpdir>`, verify cert and key files are created with valid PEM.

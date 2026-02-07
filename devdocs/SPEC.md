@@ -126,6 +126,10 @@ These overrides are also exposed as optional config fields (`upstream_override_p
 
 Binary-level smoke tests spawn the actual `redlimitador` binary and drive it with `curl`. They verify end-to-end behavior including config parsing, CLI argument handling, and process lifecycle. The proxy prints its actual listening address to stderr so tests can use `bind_address = "127.0.0.1:0"` and discover the port at runtime. `curl` is configured via the `HTTPS_PROXY` environment variable — the same mechanism real clients use — rather than `--proxy` flags.
 
+### Live API Tests
+
+Binary-level tests that send real requests to external APIs (e.g. `api.anthropic.com`) through the proxy, verifying the full MITM TLS pipeline against production servers. These tests require the `claude` CLI to be installed and authenticated (OAuth credentials at `~/.claude/.credentials.json`) and are skipped when either is unavailable (e.g. in CI).
+
 ### Test Report Generation
 
 Tests produce a human-readable report showing, for each test: what was done, what the result was, and what assertions were checked. The report is tightly coupled to actual test execution — descriptions are derived from real parameters (URLs, rules, CLI args), making drift between tests and report impossible.
