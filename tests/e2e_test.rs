@@ -120,3 +120,132 @@ async fn test_empty_ruleset_blocks_all() {
     proxy.shutdown();
     upstream.shutdown();
 }
+
+// ---------------------------------------------------------------------------
+// Phase 6: Wildcard + multi-rule tests
+// ---------------------------------------------------------------------------
+
+/// Wildcard method (`*`) allows GET, POST, PUT.
+#[tokio::test]
+async fn test_wildcard_method() {
+    let ca = TestCa::generate();
+    let upstream = TestUpstream::start(&ca, ok_handler("ok")).await;
+
+    let proxy = TestProxy::start(
+        &ca,
+        vec![rule("*", "https://localhost/*")],
+        upstream.port(),
+    )
+    .await;
+
+    let client = test_client(proxy.addr(), &ca);
+
+    for method in &["GET", "POST", "PUT"] {
+        let resp = client
+            .request(method.parse().unwrap(), "https://localhost/test")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200, "{} should be allowed", method);
+    }
+
+    proxy.shutdown();
+    upstream.shutdown();
+}
+
+/// Wildcard path: `/api/*` allows `/api/foo` but blocks `/other`.
+#[tokio::test]
+async fn test_wildcard_path() {
+    let ca = TestCa::generate();
+    let upstream = TestUpstream::start(&ca, ok_handler("ok")).await;
+
+    let proxy = TestProxy::start(
+        &ca,
+        vec![rule("GET", "https://localhost/api/*")],
+        upstream.port(),
+    )
+    .await;
+
+    let client = test_client(proxy.addr(), &ca);
+
+    // /api/foo should be allowed
+    let resp = client
+        .get("https://localhost/api/foo")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // /api/foo/bar/baz should also be allowed (* is multi-segment)
+    let resp = client
+        .get("https://localhost/api/foo/bar/baz")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // /other should be blocked
+    let resp = client
+        .get("https://localhost/other")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 451);
+
+    proxy.shutdown();
+    upstream.shutdown();
+}
+
+/// Multiple rules: correct allow/block behavior.
+#[tokio::test]
+async fn test_multiple_rules() {
+    let ca = TestCa::generate();
+    let upstream = TestUpstream::start(&ca, ok_handler("ok")).await;
+
+    let proxy = TestProxy::start(
+        &ca,
+        vec![
+            rule("GET", "https://localhost/api/*"),
+            rule("POST", "https://localhost/submit"),
+        ],
+        upstream.port(),
+    )
+    .await;
+
+    let client = test_client(proxy.addr(), &ca);
+
+    // GET /api/data — allowed by first rule
+    let resp = client
+        .get("https://localhost/api/data")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // POST /submit — allowed by second rule
+    let resp = client
+        .post("https://localhost/submit")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // POST /api/data — not allowed (first rule is GET only, second is /submit only)
+    let resp = client
+        .post("https://localhost/api/data")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 451);
+
+    // GET /submit — not allowed (second rule is POST only)
+    let resp = client
+        .get("https://localhost/submit")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 451);
+
+    proxy.shutdown();
+    upstream.shutdown();
+}
