@@ -17,7 +17,11 @@ ca_key = "./certs/ca.key"
 level = "info"
 
 # Log individual requests (allowed and blocked)
-log_requests = true
+# Accepts a boolean (both allowed + blocked) or a table for granular control:
+#   log_requests = true
+#   log_requests = false
+#   log_requests = { allowed = true, blocked = false }
+log_requests = { allowed = true, blocked = true }
 
 # Allowlist Rules
 # ===============

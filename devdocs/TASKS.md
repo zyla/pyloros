@@ -25,3 +25,8 @@ Dear agent, track progress here
   - [x] Test infrastructure: `ws_echo_handler()`, `ws_rule()`, `.with_upgrades()` on TestUpstream
   - [x] E2E tests: echo, blocked, multiple messages, binary, upstream rejection
 - [x] Add e2e test for CONNECT port 443 restriction (non-443 blocked with 451)
+- [x] Add configurable allowed/blocked request logging
+  - [x] Separate `log_allowed_requests` and `log_blocked_requests` config fields
+  - [x] Custom deserialization for backward-compatible bool or granular table form
+  - [x] Plumb both bools through handler, tunnel, and server
+  - [x] E2e test for granular logging config

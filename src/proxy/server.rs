@@ -119,7 +119,8 @@ impl ProxyServer {
 
             let tunnel_handler = tunnel_handler.clone();
             let filter_engine = self.filter_engine.clone();
-            let log_requests = self.config.logging.log_requests;
+            let log_allowed = self.config.logging.log_allowed_requests;
+            let log_blocked = self.config.logging.log_blocked_requests;
 
             // Spawn handler for this connection
             tokio::spawn(async move {
@@ -130,7 +131,7 @@ impl ProxyServer {
 
                 let service = service_fn(move |req| {
                     let handler = ProxyHandler::new(tunnel_handler.clone(), filter_engine.clone())
-                        .with_logging(log_requests);
+                        .with_request_logging(log_allowed, log_blocked);
                     async move { handler.handle(req).await }
                 });
 
@@ -188,7 +189,8 @@ impl ProxyServer {
 
                     let tunnel_handler = tunnel_handler.clone();
                     let filter_engine = self.filter_engine.clone();
-                    let log_requests = self.config.logging.log_requests;
+                    let log_allowed = self.config.logging.log_allowed_requests;
+                    let log_blocked = self.config.logging.log_blocked_requests;
 
                     tokio::spawn(async move {
                         let io = TokioIo::new(stream);
@@ -200,7 +202,7 @@ impl ProxyServer {
                             let handler = ProxyHandler::new(
                                 tunnel_handler.clone(),
                                 filter_engine.clone(),
-                            ).with_logging(log_requests);
+                            ).with_request_logging(log_allowed, log_blocked);
                             async move { handler.handle(req).await }
                         });
 
@@ -275,7 +277,8 @@ impl ProxyServer {
 
                     let tunnel_handler = tunnel_handler.clone();
                     let filter_engine = self.filter_engine.clone();
-                    let log_requests = self.config.logging.log_requests;
+                    let log_allowed = self.config.logging.log_allowed_requests;
+                    let log_blocked = self.config.logging.log_blocked_requests;
 
                     tokio::spawn(async move {
                         let io = TokioIo::new(stream);
@@ -287,7 +290,7 @@ impl ProxyServer {
                             let handler = ProxyHandler::new(
                                 tunnel_handler.clone(),
                                 filter_engine.clone(),
-                            ).with_logging(log_requests);
+                            ).with_request_logging(log_allowed, log_blocked);
                             async move { handler.handle(req).await }
                         });
 
@@ -310,8 +313,7 @@ impl ProxyServer {
 
     fn make_tunnel_handler(&self) -> TunnelHandler {
         let mut handler =
-            TunnelHandler::new(self.mitm_generator.clone(), self.filter_engine.clone())
-                .with_logging(self.config.logging.log_requests);
+            TunnelHandler::new(self.mitm_generator.clone(), self.filter_engine.clone());
         if let Some(port) = self.upstream_port_override {
             handler = handler.with_upstream_port_override(port);
         }

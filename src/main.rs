@@ -191,7 +191,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 cfg.proxy.ca_key.as_deref().unwrap_or("(not set)")
             );
             println!("  Log level: {}", cfg.logging.level);
-            println!("  Log requests: {}", cfg.logging.log_requests);
+            println!(
+                "  Log allowed requests: {}",
+                cfg.logging.log_allowed_requests
+            );
+            println!(
+                "  Log blocked requests: {}",
+                cfg.logging.log_blocked_requests
+            );
             println!("  Rules: {}", cfg.rules.len());
 
             if !cfg.rules.is_empty() {

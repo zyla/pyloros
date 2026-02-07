@@ -259,7 +259,8 @@ impl TestProxy {
             ca.key_path.clone(),
         );
         config.rules = rules;
-        config.logging.log_requests = false;
+        config.logging.log_allowed_requests = false;
+        config.logging.log_blocked_requests = false;
 
         let client_tls = ca.client_tls_config();
 
@@ -319,6 +320,51 @@ pub fn test_client_h1_only(proxy_addr: SocketAddr, ca: &TestCa) -> reqwest::Clie
         .http1_only()
         .build()
         .unwrap()
+}
+
+// ---------------------------------------------------------------------------
+// LogCapture — capture tracing output for assertions
+// ---------------------------------------------------------------------------
+
+/// Captures tracing output into a shared buffer for test assertions.
+///
+/// Installs a thread-local default subscriber that writes to an in-memory buffer.
+/// In single-threaded tokio (`#[tokio::test]`), spawned tasks run on the same
+/// thread and therefore also write to this buffer.
+pub struct LogCapture {
+    buf: Arc<std::sync::Mutex<Vec<u8>>>,
+    _guard: tracing::subscriber::DefaultGuard,
+}
+
+struct BufWriter(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for BufWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl LogCapture {
+    pub fn new() -> Self {
+        let buf = Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+        let writer_buf = buf.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(move || BufWriter(writer_buf.clone()))
+            .finish();
+        let guard = tracing::subscriber::set_default(subscriber);
+        Self { buf, _guard: guard }
+    }
+
+    pub fn contains(&self, text: &str) -> bool {
+        let bytes = self.buf.lock().unwrap();
+        let output = String::from_utf8_lossy(&bytes);
+        output.contains(text)
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -37,11 +37,6 @@ impl TunnelHandler {
         }
     }
 
-    pub fn with_logging(self, _enabled: bool) -> Self {
-        // Logging is handled per-request now
-        self
-    }
-
     /// Override the upstream port for all forwarded connections (for testing).
     pub fn with_upstream_port_override(mut self, port: u16) -> Self {
         self.upstream_port_override = Some(port);
@@ -60,7 +55,8 @@ impl TunnelHandler {
         upgraded: hyper::upgrade::Upgraded,
         host: &str,
         port: u16,
-        log_requests: bool,
+        log_allowed_requests: bool,
+        log_blocked_requests: bool,
     ) -> Result<()> {
         let upgraded = TokioIo::new(upgraded);
 
@@ -92,7 +88,8 @@ impl TunnelHandler {
                     host,
                     port,
                     filter_engine,
-                    log_requests,
+                    log_allowed_requests,
+                    log_blocked_requests,
                     upstream_port_override,
                     upstream_tls_config,
                 )
@@ -118,12 +115,14 @@ impl TunnelHandler {
 }
 
 /// Handle a request that came through the MITM tunnel
+#[allow(clippy::too_many_arguments)]
 async fn handle_tunneled_request(
     req: Request<Incoming>,
     host: String,
     port: u16,
     filter_engine: Arc<FilterEngine>,
-    log_requests: bool,
+    log_allowed_requests: bool,
+    log_blocked_requests: bool,
     upstream_port_override: Option<u16>,
     upstream_tls_config: Option<Arc<ClientConfig>>,
 ) -> std::result::Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
@@ -154,7 +153,7 @@ async fn handle_tunneled_request(
 
     // Check filter
     if !filter_engine.is_allowed(&request_info) {
-        if log_requests {
+        if log_blocked_requests {
             tracing::warn!(
                 method = %method,
                 url = %full_url,
@@ -164,7 +163,7 @@ async fn handle_tunneled_request(
         return Ok(blocked_response(&method, &full_url));
     }
 
-    if log_requests {
+    if log_allowed_requests {
         tracing::info!(
             method = %method,
             url = %full_url,
