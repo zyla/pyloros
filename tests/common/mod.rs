@@ -36,6 +36,8 @@ macro_rules! test_report {
         let name = type_name_of(f);
         // Strip "::f" suffix
         let name = &name[..name.len() - 3];
+        // In async fns, the path ends with "::{{closure}}" — strip that too
+        let name = name.strip_suffix("::{{closure}}").unwrap_or(name);
         $crate::common::TestReport::new(name, $title)
     }};
 }

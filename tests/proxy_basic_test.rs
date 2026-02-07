@@ -1,6 +1,6 @@
 mod common;
 
-use common::{ok_handler, rule, test_client, TestCa, TestProxy, TestUpstream};
+use common::{ok_handler, rule, ReportingClient, TestCa, TestProxy, TestUpstream};
 
 // ---------------------------------------------------------------------------
 // Core e2e tests — allowed/blocked flow
@@ -9,22 +9,32 @@ use common::{ok_handler, rule, test_client, TestCa, TestProxy, TestUpstream};
 /// Allowed GET reaches upstream and returns 200 + body.
 #[tokio::test]
 async fn test_allowed_get_returns_200() {
-    let ca = TestCa::generate();
-    let upstream = TestUpstream::start(&ca, ok_handler("hello from upstream")).await;
+    let t = test_report!("Allowed GET reaches upstream");
 
-    let proxy = TestProxy::start(
+    let ca = TestCa::generate();
+    let upstream = TestUpstream::start_reported(
+        &t,
+        &ca,
+        ok_handler("hello from upstream"),
+        "returns 'hello from upstream'",
+    )
+    .await;
+    let proxy = TestProxy::start_reported(
+        &t,
         &ca,
         vec![rule("GET", "https://localhost/*")],
         upstream.port(),
     )
     .await;
 
-    let client = test_client(proxy.addr(), &ca);
-    let resp = client.get("https://localhost/test").send().await.unwrap();
+    let client = ReportingClient::new(&t, proxy.addr(), &ca);
+    let resp = client.get("https://localhost/test").await;
 
-    assert_eq!(resp.status(), 200);
+    let status = resp.status().as_u16();
     let body = resp.text().await.unwrap();
-    assert_eq!(body, "hello from upstream");
+
+    t.assert_eq("Response status", &status, &200u16);
+    t.assert_eq("Response body", &body.as_str(), &"hello from upstream");
 
     proxy.shutdown();
     upstream.shutdown();
@@ -33,33 +43,40 @@ async fn test_allowed_get_returns_200() {
 /// Blocked request (no matching rule) returns 451 with X-Blocked-By header.
 #[tokio::test]
 async fn test_blocked_request_returns_451() {
+    let t = test_report!("Blocked request returns 451");
+
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start(&ca, ok_handler("should not reach")).await;
+    let upstream = TestUpstream::start_reported(
+        &t,
+        &ca,
+        ok_handler("should not reach"),
+        "returns 'should not reach'",
+    )
+    .await;
 
     // Rule only allows example.com, not localhost
-    let proxy = TestProxy::start(
+    let proxy = TestProxy::start_reported(
+        &t,
         &ca,
         vec![rule("GET", "https://example.com/*")],
         upstream.port(),
     )
     .await;
 
-    let client = test_client(proxy.addr(), &ca);
-    let resp = client
-        .get("https://localhost/blocked")
-        .send()
-        .await
-        .unwrap();
+    let client = ReportingClient::new(&t, proxy.addr(), &ca);
+    let resp = client.get("https://localhost/blocked").await;
 
-    assert_eq!(resp.status(), 451);
-    assert_eq!(
-        resp.headers()
-            .get("X-Blocked-By")
-            .unwrap()
-            .to_str()
-            .unwrap(),
-        "redlimitador"
-    );
+    let status = resp.status().as_u16();
+    let blocked_by = resp
+        .headers()
+        .get("X-Blocked-By")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    t.assert_eq("Response status", &status, &451u16);
+    t.assert_eq("X-Blocked-By header", &blocked_by.as_str(), &"redlimitador");
 
     proxy.shutdown();
     upstream.shutdown();
@@ -68,25 +85,27 @@ async fn test_blocked_request_returns_451() {
 /// Method filtering: rule allows GET but POST is blocked.
 #[tokio::test]
 async fn test_method_filtering() {
-    let ca = TestCa::generate();
-    let upstream = TestUpstream::start(&ca, ok_handler("ok")).await;
+    let t = test_report!("Method filtering: GET allowed, POST blocked");
 
-    let proxy = TestProxy::start(
+    let ca = TestCa::generate();
+    let upstream = TestUpstream::start_reported(&t, &ca, ok_handler("ok"), "returns 'ok'").await;
+    let proxy = TestProxy::start_reported(
+        &t,
         &ca,
         vec![rule("GET", "https://localhost/*")],
         upstream.port(),
     )
     .await;
 
-    let client = test_client(proxy.addr(), &ca);
+    let client = ReportingClient::new(&t, proxy.addr(), &ca);
 
     // GET should be allowed
-    let resp = client.get("https://localhost/path").send().await.unwrap();
-    assert_eq!(resp.status(), 200);
+    let resp = client.get("https://localhost/path").await;
+    t.assert_eq("GET status", &resp.status().as_u16(), &200u16);
 
     // POST should be blocked
-    let resp = client.post("https://localhost/path").send().await.unwrap();
-    assert_eq!(resp.status(), 451);
+    let resp = client.post("https://localhost/path").await;
+    t.assert_eq("POST status", &resp.status().as_u16(), &451u16);
 
     proxy.shutdown();
     upstream.shutdown();
@@ -95,19 +114,17 @@ async fn test_method_filtering() {
 /// Empty ruleset blocks everything.
 #[tokio::test]
 async fn test_empty_ruleset_blocks_all() {
+    let t = test_report!("Empty ruleset blocks all requests");
+
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start(&ca, ok_handler("nope")).await;
+    let upstream =
+        TestUpstream::start_reported(&t, &ca, ok_handler("nope"), "returns 'nope'").await;
+    let proxy = TestProxy::start_reported(&t, &ca, vec![], upstream.port()).await;
 
-    let proxy = TestProxy::start(&ca, vec![], upstream.port()).await;
+    let client = ReportingClient::new(&t, proxy.addr(), &ca);
+    let resp = client.get("https://localhost/anything").await;
 
-    let client = test_client(proxy.addr(), &ca);
-    let resp = client
-        .get("https://localhost/anything")
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), 451);
+    t.assert_eq("Response status", &resp.status().as_u16(), &451u16);
 
     proxy.shutdown();
     upstream.shutdown();
@@ -120,21 +137,29 @@ async fn test_empty_ruleset_blocks_all() {
 /// Wildcard method (`*`) allows GET, POST, PUT.
 #[tokio::test]
 async fn test_wildcard_method() {
+    let t = test_report!("Wildcard method allows any HTTP method");
+
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start(&ca, ok_handler("ok")).await;
+    let upstream = TestUpstream::start_reported(&t, &ca, ok_handler("ok"), "returns 'ok'").await;
+    let proxy = TestProxy::start_reported(
+        &t,
+        &ca,
+        vec![rule("*", "https://localhost/*")],
+        upstream.port(),
+    )
+    .await;
 
-    let proxy =
-        TestProxy::start(&ca, vec![rule("*", "https://localhost/*")], upstream.port()).await;
-
-    let client = test_client(proxy.addr(), &ca);
+    let client = ReportingClient::new(&t, proxy.addr(), &ca);
 
     for method in &["GET", "POST", "PUT"] {
         let resp = client
             .request(method.parse().unwrap(), "https://localhost/test")
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), 200, "{} should be allowed", method);
+            .await;
+        t.assert_eq(
+            &format!("{} status", method),
+            &resp.status().as_u16(),
+            &200u16,
+        );
     }
 
     proxy.shutdown();
@@ -144,37 +169,31 @@ async fn test_wildcard_method() {
 /// Wildcard path: `/api/*` allows `/api/foo` but blocks `/other`.
 #[tokio::test]
 async fn test_wildcard_path() {
-    let ca = TestCa::generate();
-    let upstream = TestUpstream::start(&ca, ok_handler("ok")).await;
+    let t = test_report!("Wildcard path matching");
 
-    let proxy = TestProxy::start(
+    let ca = TestCa::generate();
+    let upstream = TestUpstream::start_reported(&t, &ca, ok_handler("ok"), "returns 'ok'").await;
+    let proxy = TestProxy::start_reported(
+        &t,
         &ca,
         vec![rule("GET", "https://localhost/api/*")],
         upstream.port(),
     )
     .await;
 
-    let client = test_client(proxy.addr(), &ca);
+    let client = ReportingClient::new(&t, proxy.addr(), &ca);
 
     // /api/foo should be allowed
-    let resp = client
-        .get("https://localhost/api/foo")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
+    let resp = client.get("https://localhost/api/foo").await;
+    t.assert_eq("/api/foo status", &resp.status().as_u16(), &200u16);
 
     // /api/foo/bar/baz should also be allowed (* is multi-segment)
-    let resp = client
-        .get("https://localhost/api/foo/bar/baz")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
+    let resp = client.get("https://localhost/api/foo/bar/baz").await;
+    t.assert_eq("/api/foo/bar/baz status", &resp.status().as_u16(), &200u16);
 
     // /other should be blocked
-    let resp = client.get("https://localhost/other").send().await.unwrap();
-    assert_eq!(resp.status(), 451);
+    let resp = client.get("https://localhost/other").await;
+    t.assert_eq("/other status", &resp.status().as_u16(), &451u16);
 
     proxy.shutdown();
     upstream.shutdown();
@@ -183,10 +202,12 @@ async fn test_wildcard_path() {
 /// Multiple rules: correct allow/block behavior.
 #[tokio::test]
 async fn test_multiple_rules() {
-    let ca = TestCa::generate();
-    let upstream = TestUpstream::start(&ca, ok_handler("ok")).await;
+    let t = test_report!("Multiple rules allow/block correctly");
 
-    let proxy = TestProxy::start(
+    let ca = TestCa::generate();
+    let upstream = TestUpstream::start_reported(&t, &ca, ok_handler("ok"), "returns 'ok'").await;
+    let proxy = TestProxy::start_reported(
+        &t,
         &ca,
         vec![
             rule("GET", "https://localhost/api/*"),
@@ -196,35 +217,23 @@ async fn test_multiple_rules() {
     )
     .await;
 
-    let client = test_client(proxy.addr(), &ca);
+    let client = ReportingClient::new(&t, proxy.addr(), &ca);
 
     // GET /api/data — allowed by first rule
-    let resp = client
-        .get("https://localhost/api/data")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
+    let resp = client.get("https://localhost/api/data").await;
+    t.assert_eq("GET /api/data status", &resp.status().as_u16(), &200u16);
 
     // POST /submit — allowed by second rule
-    let resp = client
-        .post("https://localhost/submit")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
+    let resp = client.post("https://localhost/submit").await;
+    t.assert_eq("POST /submit status", &resp.status().as_u16(), &200u16);
 
-    // POST /api/data — not allowed (first rule is GET only, second is /submit only)
-    let resp = client
-        .post("https://localhost/api/data")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 451);
+    // POST /api/data — not allowed
+    let resp = client.post("https://localhost/api/data").await;
+    t.assert_eq("POST /api/data status", &resp.status().as_u16(), &451u16);
 
-    // GET /submit — not allowed (second rule is POST only)
-    let resp = client.get("https://localhost/submit").send().await.unwrap();
-    assert_eq!(resp.status(), 451);
+    // GET /submit — not allowed
+    let resp = client.get("https://localhost/submit").await;
+    t.assert_eq("GET /submit status", &resp.status().as_u16(), &451u16);
 
     proxy.shutdown();
     upstream.shutdown();
