@@ -1,0 +1,8 @@
+pre-commit:
+  parallel: true
+  jobs:
+    - name: format
+      run: cargo fmt --all
+      stage_fixed: true
+    - name: clippy
+      run: cargo clippy -- -D warnings

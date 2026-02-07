@@ -103,11 +103,11 @@ impl Config {
             ))
         })?;
 
-        Self::from_str(&content)
+        Self::parse(&content)
     }
 
     /// Parse configuration from a TOML string
-    pub fn from_str(content: &str) -> Result<Self> {
+    pub fn parse(content: &str) -> Result<Self> {
         toml::from_str(content).map_err(|e| Error::config(format!("Invalid TOML: {}", e)))
     }
 
@@ -156,7 +156,7 @@ ca_cert = "/path/to/ca.crt"
 ca_key = "/path/to/ca.key"
 "#;
 
-        let config = Config::from_str(toml).unwrap();
+        let config = Config::parse(toml).unwrap();
         assert_eq!(config.proxy.bind_address, "127.0.0.1:3128");
         assert_eq!(config.proxy.ca_cert, Some("/path/to/ca.crt".to_string()));
         assert_eq!(config.proxy.ca_key, Some("/path/to/ca.key".to_string()));
@@ -187,7 +187,7 @@ url = "wss://realtime.example.com/socket"
 websocket = true
 "#;
 
-        let config = Config::from_str(toml).unwrap();
+        let config = Config::parse(toml).unwrap();
         assert_eq!(config.rules.len(), 4);
 
         assert_eq!(config.rules[0].method, "GET");
@@ -195,7 +195,10 @@ websocket = true
         assert!(!config.rules[0].websocket);
 
         assert_eq!(config.rules[1].method, "POST");
-        assert_eq!(config.rules[1].url, "https://api.example.com/users/*/profile");
+        assert_eq!(
+            config.rules[1].url,
+            "https://api.example.com/users/*/profile"
+        );
 
         assert_eq!(config.rules[2].method, "*");
         assert_eq!(config.rules[2].url, "https://*.github.com/*");
@@ -207,7 +210,7 @@ websocket = true
     #[test]
     fn test_default_values() {
         let toml = "";
-        let config = Config::from_str(toml).unwrap();
+        let config = Config::parse(toml).unwrap();
 
         assert_eq!(config.proxy.bind_address, "127.0.0.1:8080");
         assert_eq!(config.logging.level, "info");
@@ -222,7 +225,7 @@ level = "debug"
 log_requests = false
 "#;
 
-        let config = Config::from_str(toml).unwrap();
+        let config = Config::parse(toml).unwrap();
         assert_eq!(config.logging.level, "debug");
         assert!(!config.logging.log_requests);
     }
@@ -230,7 +233,7 @@ log_requests = false
     #[test]
     fn test_invalid_toml() {
         let toml = "this is not valid toml [[[";
-        let result = Config::from_str(toml);
+        let result = Config::parse(toml);
         assert!(result.is_err());
     }
 }
