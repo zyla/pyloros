@@ -66,6 +66,8 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     let cli = Cli::parse();
 
     match cli.command {
@@ -83,6 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing_subscriber::fmt()
                 .with_env_filter(filter)
                 .with_target(false)
+                .with_writer(std::io::stderr)
                 .init();
 
             // Load config
