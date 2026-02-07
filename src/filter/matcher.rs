@@ -170,7 +170,14 @@ impl UrlPattern {
     }
 
     /// Check if this pattern matches the given URL components
-    pub fn matches(&self, scheme: &str, host: &str, port: Option<u16>, path: &str, query: Option<&str>) -> bool {
+    pub fn matches(
+        &self,
+        scheme: &str,
+        host: &str,
+        port: Option<u16>,
+        path: &str,
+        query: Option<&str>,
+    ) -> bool {
         // Match scheme
         if !self.scheme.matches(scheme) {
             return false;
@@ -359,7 +366,13 @@ mod tests {
         fn test_with_query() {
             let p = UrlPattern::new("https://api.com/search?q=*&limit=*").unwrap();
             assert!(p.matches("https", "api.com", None, "/search", Some("q=test&limit=10")));
-            assert!(p.matches("https", "api.com", None, "/search", Some("q=anything&limit=100")));
+            assert!(p.matches(
+                "https",
+                "api.com",
+                None,
+                "/search",
+                Some("q=anything&limit=100")
+            ));
             assert!(!p.matches("https", "api.com", None, "/search", None));
             assert!(!p.matches("https", "api.com", None, "/search", Some("q=test")));
         }
@@ -374,8 +387,20 @@ mod tests {
         #[test]
         fn test_complex_path() {
             let p = UrlPattern::new("https://api.github.com/repos/*/commits/*").unwrap();
-            assert!(p.matches("https", "api.github.com", None, "/repos/user/repo/commits/abc123", None));
-            assert!(p.matches("https", "api.github.com", None, "/repos/org/project/commits/main", None));
+            assert!(p.matches(
+                "https",
+                "api.github.com",
+                None,
+                "/repos/user/repo/commits/abc123",
+                None
+            ));
+            assert!(p.matches(
+                "https",
+                "api.github.com",
+                None,
+                "/repos/org/project/commits/main",
+                None
+            ));
         }
 
         #[test]

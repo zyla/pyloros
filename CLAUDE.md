@@ -12,6 +12,11 @@ cargo test --test filter_test  # Run a specific integration test file
 cargo test pattern_matching  # Run tests matching a name pattern
 cargo clippy                 # Lint
 cargo fmt                    # Format code
+
+# Coverage (one-time setup: rustup component add llvm-tools-preview && cargo install cargo-llvm-cov)
+cargo llvm-cov                                  # Text summary
+cargo llvm-cov --html                           # HTML report in coverage/
+cargo llvm-cov --lcov --output-path lcov.info   # LCOV format
 ```
 
 ## CLI Commands

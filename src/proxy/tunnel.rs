@@ -53,9 +53,10 @@ impl TunnelHandler {
         let acceptor = TlsAcceptor::from(Arc::new(server_config));
 
         // Accept TLS from client
-        let client_tls = acceptor.accept(upgraded).await.map_err(|e| {
-            Error::tls(format!("Failed to accept TLS from client: {}", e))
-        })?;
+        let client_tls = acceptor
+            .accept(upgraded)
+            .await
+            .map_err(|e| Error::tls(format!("Failed to accept TLS from client: {}", e)))?;
 
         tracing::debug!(host = %host, "TLS handshake with client complete");
 
@@ -66,9 +67,7 @@ impl TunnelHandler {
         let service = service_fn(move |req: Request<Incoming>| {
             let host = host.clone();
             let filter_engine = filter_engine.clone();
-            async move {
-                handle_tunneled_request(req, host, port, filter_engine, log_requests).await
-            }
+            async move { handle_tunneled_request(req, host, port, filter_engine, log_requests).await }
         });
 
         // Serve HTTP/1.1 over the TLS connection
@@ -106,7 +105,12 @@ async fn handle_tunneled_request(
     let is_websocket = req
         .headers()
         .get(hyper::header::UPGRADE)
-        .map(|v| v.to_str().unwrap_or("").to_lowercase().contains("websocket"))
+        .map(|v| {
+            v.to_str()
+                .unwrap_or("")
+                .to_lowercase()
+                .contains("websocket")
+        })
         .unwrap_or(false);
 
     // Create request info for filtering
@@ -194,9 +198,7 @@ async fn forward_request(
 
     // Rebuild the request with proper host header
     let (parts, body) = req.into_parts();
-    let mut builder = Request::builder()
-        .method(parts.method)
-        .uri(parts.uri);
+    let mut builder = Request::builder().method(parts.method).uri(parts.uri);
 
     // Copy headers
     for (name, value) in parts.headers.iter() {

@@ -18,3 +18,8 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Coverage
+lcov.info
+coverage-summary.txt
+/coverage/

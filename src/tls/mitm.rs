@@ -35,7 +35,11 @@ impl MitmCertificateGenerator {
     }
 
     /// Create with custom cache settings
-    pub fn with_cache(ca: CertificateAuthority, cache_capacity: usize, cache_ttl: Duration) -> Self {
+    pub fn with_cache(
+        ca: CertificateAuthority,
+        cache_capacity: usize,
+        cache_ttl: Duration,
+    ) -> Self {
         Self {
             ca: Arc::new(ca),
             cache: CertificateCache::new(cache_capacity, cache_ttl),
@@ -75,7 +79,9 @@ impl MitmCertificateGenerator {
         let config = ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(cert_chain, key)
-            .map_err(|e| crate::error::Error::tls(format!("Failed to build server config: {}", e)))?;
+            .map_err(|e| {
+                crate::error::Error::tls(format!("Failed to build server config: {}", e))
+            })?;
 
         Ok(config)
     }
@@ -93,28 +99,33 @@ impl MitmCertificateGenerator {
 
 /// A certificate resolver that generates MITM certificates on demand
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct MitmCertResolver {
     generator: Arc<MitmCertificateGenerator>,
     hostname: String,
 }
 
 impl MitmCertResolver {
+    #[allow(dead_code)]
     pub fn new(generator: Arc<MitmCertificateGenerator>, hostname: String) -> Self {
-        Self { generator, hostname }
+        Self {
+            generator,
+            hostname,
+        }
     }
 }
 
 impl ResolvesServerCert for MitmCertResolver {
-    fn resolve(
-        &self,
-        _client_hello: rustls::server::ClientHello<'_>,
-    ) -> Option<Arc<CertifiedKey>> {
+    fn resolve(&self, _client_hello: rustls::server::ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
         let (cert, key) = self.generator.get_cert_for_host(&self.hostname).ok()?;
         let ca_cert = self.generator.ca_cert_der().clone();
 
         let signing_key = rustls::crypto::aws_lc_rs::sign::any_supported_type(&key).ok()?;
 
-        Some(Arc::new(CertifiedKey::new(vec![cert, ca_cert], signing_key)))
+        Some(Arc::new(CertifiedKey::new(
+            vec![cert, ca_cert],
+            signing_key,
+        )))
     }
 }
 
