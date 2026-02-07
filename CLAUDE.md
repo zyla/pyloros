@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 cargo build                  # Build the project
 cargo test                   # Run all tests (unit + integration)
 cargo test --lib             # Run unit tests only
-cargo test --test filter_test  # Run a specific integration test file
+cargo test --test proxy_basic_test  # Run a specific integration test file
 cargo test pattern_matching  # Run tests matching a name pattern
 cargo clippy                 # Lint
 cargo fmt                    # Format code
@@ -94,6 +94,36 @@ See `devdocs/SPEC.md` for product spec (features, configuration format, technica
 - Async throughout using Tokio; one spawned task per connection
 - `FilterEngine` and `MitmCertificateGenerator` are wrapped in `Arc` for cross-task sharing
 
+## Parallel Development
+
+Multiple features can be developed simultaneously in separate worktrees. To avoid
+merge conflicts:
+
+- **Tests**: Each feature gets its own `tests/<feature>_test.rs` file. Never append
+  tests for a new feature into an existing test file.
+- **Shared infra**: Add new helpers to `tests/common/mod.rs` only when needed by
+  multiple test files. Feature-specific helpers stay in the test file.
+- **TASKS.md / SPEC.md**: These are shared docs that will conflict. Keep edits
+  minimal and well-scoped. Rebase before merging.
+
 ## Tests
 
-Integration tests live in `tests/` (`filter_test.rs`, `tls_test.rs`). Unit tests are inline in their respective modules (`config.rs`, `matcher.rs`, `rules.rs`, `ca.rs`, `mitm.rs`, `cache.rs`, `tunnel.rs`). Tests use `tempfile` for temporary directories and `wiremock` for HTTP mocking.
+Integration tests live in `tests/`, split by feature area to minimize merge conflicts
+across parallel worktrees:
+- `proxy_basic_test.rs` — core proxy flow (allowed/blocked, wildcards, multi-rule)
+- `proxy_forwarding_test.rs` — header forwarding, error handling, large bodies
+- `http2_test.rs` — HTTP/2 protocol negotiation and translation
+- `logging_test.rs` — granular request logging configuration
+- `websocket_test.rs` — WebSocket upgrade and echo
+- `filter_test.rs` — FilterEngine unit tests
+- `tls_test.rs` — certificate generation and caching
+- `cli_test.rs` — CLI subcommand validation
+
+Shared test infrastructure (TestCa, TestProxy, TestUpstream, handlers) lives in
+`tests/common/mod.rs`.
+
+**Adding tests for new features**: Create a new test file (`tests/<feature>_test.rs`)
+rather than appending to an existing one. This prevents merge conflicts when
+multiple features are developed in parallel across worktrees.
+
+Unit tests are inline in their respective modules (`config.rs`, `matcher.rs`, `rules.rs`, `ca.rs`, `mitm.rs`, `cache.rs`, `tunnel.rs`). Tests use `tempfile` for temporary directories and `wiremock` for HTTP mocking.
