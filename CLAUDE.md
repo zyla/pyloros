@@ -17,7 +17,7 @@ cargo fmt                    # Format code
 ## CLI Commands
 
 ```bash
-cargo run -- run --config config.toml                    # Start proxy
+cargo run -- run --config config.toml                    # Start proxy (--config is optional)
 cargo run -- generate-ca --out ./certs/                  # Generate CA cert/key
 cargo run -- validate-config --config config.toml        # Validate config
 ```
@@ -53,7 +53,7 @@ See `devdocs/SPEC.md` for product spec (features, configuration format, technica
 - **`filter/`** - Request filtering: `rules.rs` (FilterEngine compiles config rules, evaluates RequestInfo), `matcher.rs` (PatternMatcher for wildcard `*` matching on hosts/paths/queries, UrlPattern for full URL decomposition)
 - **`tls/`** - Certificate management: `ca.rs` (CA generation/loading, per-host cert signing), `mitm.rs` (MitmCertificateGenerator wraps CA with caching, builds rustls ServerConfig), `cache.rs` (LRU cache with TTL for generated certs)
 - **`config.rs`** - TOML config parsing into `Config`/`ProxyConfig`/`LoggingConfig`/`Rule` structs
-- **`error.rs`** - `thiserror`-based error types (`RedlimitadorError`)
+- **`error.rs`** - `thiserror`-based error types (`Error`)
 - **`main.rs`** - clap CLI with `run`, `generate-ca`, `validate-config` subcommands
 
 ### Key patterns
@@ -63,4 +63,4 @@ See `devdocs/SPEC.md` for product spec (features, configuration format, technica
 
 ## Tests
 
-Integration tests live in `tests/` (`filter_test.rs`, `tls_test.rs`). Unit tests are inline in their respective modules (`config.rs`, `matcher.rs`, `rules.rs`, `ca.rs`, `mitm.rs`, `cache.rs`). Tests use `tempfile` for temporary directories and `wiremock` for HTTP mocking.
+Integration tests live in `tests/` (`filter_test.rs`, `tls_test.rs`). Unit tests are inline in their respective modules (`config.rs`, `matcher.rs`, `rules.rs`, `ca.rs`, `mitm.rs`, `cache.rs`, `tunnel.rs`). Tests use `tempfile` for temporary directories and `wiremock` for HTTP mocking.
