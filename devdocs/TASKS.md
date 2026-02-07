@@ -18,3 +18,9 @@ Dear agent, track progress here
   - [x] ALPN on upstream ClientConfig + protocol branching (proxy ↔ upstream)
   - [x] Test infrastructure: h2-capable TestUpstream, h1-only variants, test_client_h1_only
   - [x] E2E tests: h2 allowed, h1↔h2 protocol translation, h2 blocked 451, h2 large body
+- [x] WebSocket support: bidirectional frame forwarding
+  - [x] Extract `connect_upstream_tls()` and `rebuild_request_for_upstream()` helpers
+  - [x] Add `forward_websocket()` with upgrade handshake + `copy_bidirectional`
+  - [x] Branch on `is_websocket` in `handle_tunneled_request()`
+  - [x] Test infrastructure: `ws_echo_handler()`, `ws_rule()`, `.with_upgrades()` on TestUpstream
+  - [x] E2E tests: echo, blocked, multiple messages, binary, upstream rejection
