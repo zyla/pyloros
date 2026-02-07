@@ -1,6 +1,6 @@
 mod common;
 
-use common::{ws_echo_handler, ws_rule, TestCa, TestProxy, TestUpstream};
+use common::{ok_handler, ws_echo_handler, ws_rule, TestCa, TestProxy, TestUpstream};
 use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -181,6 +181,51 @@ async fn test_websocket_binary_message() {
     }
 
     ws.close(None).await.unwrap();
+    proxy.shutdown();
+    upstream.shutdown();
+}
+
+// ---------------------------------------------------------------------------
+// Group 3: Upstream rejection
+// ---------------------------------------------------------------------------
+
+/// When upstream returns a non-101 response to a WebSocket upgrade, the proxy
+/// forwards the rejection to the client.
+#[tokio::test]
+async fn test_websocket_upstream_rejects() {
+    let ca = TestCa::generate();
+    // Use a handler that returns 200 OK instead of 101 Switching Protocols
+    let upstream = TestUpstream::start(&ca, ok_handler("not a websocket server")).await;
+    let proxy = TestProxy::start(&ca, vec![ws_rule("wss://localhost/*")], upstream.port()).await;
+
+    // Manually do CONNECT + TLS + raw HTTP upgrade request
+    let mut tcp = TcpStream::connect(proxy.addr()).await.unwrap();
+    let connect_req = "CONNECT localhost:443 HTTP/1.1\r\nHost: localhost:443\r\n\r\n";
+    tcp.write_all(connect_req.as_bytes()).await.unwrap();
+
+    let mut buf = [0u8; 1024];
+    let n = tcp.read(&mut buf).await.unwrap();
+    let response = String::from_utf8_lossy(&buf[..n]);
+    assert!(response.starts_with("HTTP/1.1 200"));
+
+    let tls_config = ca.client_tls_config();
+    let connector = tokio_rustls::TlsConnector::from(tls_config);
+    let server_name = rustls::pki_types::ServerName::try_from("localhost").unwrap();
+    let tls_stream = connector.connect(server_name, tcp).await.unwrap();
+
+    // Try WebSocket handshake — upstream doesn't support it, so it should fail
+    let ws_url = "wss://localhost/ws";
+    let result = tokio_tungstenite::client_async(ws_url, tls_stream).await;
+
+    // The handshake should fail because upstream returns 200 instead of 101
+    assert!(result.is_err(), "Expected WebSocket handshake to fail");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("200"),
+        "Expected error to mention status 200, got: {}",
+        err
+    );
+
     proxy.shutdown();
     upstream.shutdown();
 }
