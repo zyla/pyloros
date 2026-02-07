@@ -4,9 +4,7 @@ A default-deny allowlist-based HTTPS filtering proxy for controlling AI agent ne
 
 ## Purpose of this document
 
-It is a declarative specification of what we want this product to be (including technical choices). We do code changes based on this document, not willy-nilly.
-Code should ultimately be maintained to match the requirements here.
-When we want to change something in the product, we first modify the SPEC.
+It is a declarative specification of what we want this product to be: features, technical choices (libraries, protocols, testing strategy), and configuration format. Code should ultimately be maintained to match the requirements here. When we want to change something in the product, we first modify the SPEC.
 
 ## Features
 
@@ -46,18 +44,16 @@ subcommands:
 
 ## Technical Decisions
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Proxy mode | Explicit HTTP proxy | Simpler client config, no iptables needed |
-| HTTPS inspection | MITM with CA | Required for content inspection |
-| Async runtime | Tokio | Standard for Rust async networking |
-| TLS | rustls + rcgen | Pure Rust, no OpenSSL dependency |
-| Config format | TOML | Human-readable, supports comments |
-| Wildcard semantics | `*` = multi-segment | Simpler rules, fewer edge cases |
-| Blocked response | HTTP 451 | Clear intentional blocking signal |
-| Cert caching | In-memory LRU | Balance of performance and memory |
-| CLI | clap (derive) | Standard Rust CLI library |
-| HTTP | hyper | Mature, supports HTTP/1.1 and HTTP/2 |
+- Explicit HTTP proxy (no iptables)
+- MITM with CA for HTTPS inspection
+- Tokio async runtime
+- rustls + rcgen for TLS (pure Rust, no OpenSSL)
+- TOML config
+- `*` wildcard = multi-segment match
+- HTTP 451 for blocked requests
+- In-memory LRU cert cache
+- clap (derive) CLI
+- hyper for HTTP
 
 ## Configuration Format
 
@@ -84,15 +80,6 @@ method = "GET"
 url = "wss://realtime.example.com/socket"
 websocket = true
 ```
-
-## Future Considerations
-- Configuration hot-reload
-- Protocol-specific filtering (e.g. git transport)
-- Request body inspection
-- Response filtering
-- Rate limiting
-- Metrics/observability
-- Upstream proxy chaining
 
 ## Testing
 
