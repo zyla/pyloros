@@ -45,9 +45,7 @@ If you receive advice during development, you can add it to this section - will 
 
 ## Architecture
 
-Redlimitador is a default-deny allowlist-based HTTPS filtering proxy that uses MITM TLS interception to inspect encrypted traffic. It is designed for controlling AI agent network access.
-
-**Request flow:** Client -> Proxy Handler -> TLS Terminator (MITM) -> Filter Engine (pattern match against allowlist rules) -> Forwarder -> Target Server. Blocked requests get HTTP 451.
+See `devdocs/SPEC.md` for product spec (features, configuration format, technical decisions).
 
 ### Module layout (`src/`)
 
@@ -62,13 +60,6 @@ Redlimitador is a default-deny allowlist-based HTTPS filtering proxy that uses M
 
 - Async throughout using Tokio; one spawned task per connection
 - `FilterEngine` and `MitmCertificateGenerator` are wrapped in `Arc` for cross-task sharing
-- Wildcard `*` matches any character sequence (including across path segments) - compiled once at startup
-- Certificate cache: LRU with 1000 capacity, 12-hour TTL, mutex-protected
-- TLS uses rustls (pure Rust, no OpenSSL dependency)
-
-## Configuration
-
-TOML format with three sections: `[proxy]` (bind address, CA cert/key paths), `[logging]` (level, log_requests), `[[rules]]` (method, url, optional websocket flag). See `examples/basic_config.toml` for reference. Test fixtures are in `tests/fixtures/`.
 
 ## Tests
 
