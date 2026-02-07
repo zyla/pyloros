@@ -20,6 +20,8 @@ use crate::tls::MitmCertificateGenerator;
 pub struct TunnelHandler {
     mitm_generator: Arc<MitmCertificateGenerator>,
     filter_engine: Arc<FilterEngine>,
+    upstream_port_override: Option<u16>,
+    upstream_tls_config: Option<Arc<ClientConfig>>,
 }
 
 impl TunnelHandler {
@@ -30,11 +32,25 @@ impl TunnelHandler {
         Self {
             mitm_generator,
             filter_engine,
+            upstream_port_override: None,
+            upstream_tls_config: None,
         }
     }
 
     pub fn with_logging(self, _enabled: bool) -> Self {
         // Logging is handled per-request now
+        self
+    }
+
+    /// Override the upstream port for all forwarded connections (for testing).
+    pub fn with_upstream_port_override(mut self, port: u16) -> Self {
+        self.upstream_port_override = Some(port);
+        self
+    }
+
+    /// Inject a custom TLS config for upstream connections (for testing with self-signed certs).
+    pub fn with_upstream_tls(mut self, config: Arc<ClientConfig>) -> Self {
+        self.upstream_tls_config = Some(config);
         self
     }
 
@@ -63,11 +79,25 @@ impl TunnelHandler {
         // Create service to handle HTTP requests over TLS
         let host = host.to_string();
         let filter_engine = self.filter_engine.clone();
+        let upstream_port_override = self.upstream_port_override;
+        let upstream_tls_config = self.upstream_tls_config.clone();
 
         let service = service_fn(move |req: Request<Incoming>| {
             let host = host.clone();
             let filter_engine = filter_engine.clone();
-            async move { handle_tunneled_request(req, host, port, filter_engine, log_requests).await }
+            let upstream_tls_config = upstream_tls_config.clone();
+            async move {
+                handle_tunneled_request(
+                    req,
+                    host,
+                    port,
+                    filter_engine,
+                    log_requests,
+                    upstream_port_override,
+                    upstream_tls_config,
+                )
+                .await
+            }
         });
 
         // Serve HTTP/1.1 over the TLS connection
@@ -96,6 +126,8 @@ async fn handle_tunneled_request(
     port: u16,
     filter_engine: Arc<FilterEngine>,
     log_requests: bool,
+    upstream_port_override: Option<u16>,
+    upstream_tls_config: Option<Arc<ClientConfig>>,
 ) -> std::result::Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
     let method = req.method().to_string();
     let path = req.uri().path().to_string();
@@ -143,7 +175,8 @@ async fn handle_tunneled_request(
     }
 
     // Forward the request to the actual server
-    match forward_request(req, host, port).await {
+    let connect_port = upstream_port_override.unwrap_or(port);
+    match forward_request(req, host, connect_port, upstream_tls_config).await {
         Ok(resp) => Ok(resp),
         Err(e) => {
             tracing::error!(error = %e, "Failed to forward request");
@@ -157,6 +190,7 @@ async fn forward_request(
     req: Request<Incoming>,
     host: String,
     port: u16,
+    upstream_tls_config: Option<Arc<ClientConfig>>,
 ) -> Result<Response<BoxBody<Bytes, hyper::Error>>> {
     // Connect to upstream
     let addr = format!("{}:{}", host, port);
@@ -165,14 +199,20 @@ async fn forward_request(
         .map_err(|e| Error::proxy(format!("Failed to connect to {}: {}", addr, e)))?;
 
     // Set up TLS for upstream connection
-    let mut root_store = rustls::RootCertStore::empty();
-    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let client_config = match upstream_tls_config {
+        Some(config) => config,
+        None => {
+            let mut root_store = rustls::RootCertStore::empty();
+            root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+            Arc::new(
+                ClientConfig::builder()
+                    .with_root_certificates(root_store)
+                    .with_no_client_auth(),
+            )
+        }
+    };
 
-    let client_config = ClientConfig::builder()
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
-
-    let connector = TlsConnector::from(Arc::new(client_config));
+    let connector = TlsConnector::from(client_config);
 
     let server_name = rustls::pki_types::ServerName::try_from(host.clone())
         .map_err(|e| Error::proxy(format!("Invalid server name '{}': {}", host, e)))?;
