@@ -259,7 +259,8 @@ impl TestProxy {
             ca.key_path.clone(),
         );
         config.rules = rules;
-        config.logging.log_requests = false;
+        config.logging.log_allowed_requests = false;
+        config.logging.log_blocked_requests = false;
 
         let client_tls = ca.client_tls_config();
 

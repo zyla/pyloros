@@ -4,6 +4,7 @@ use common::{
     echo_handler, ok_handler, rule, test_client, test_client_h1_only, TestCa, TestProxy,
     TestUpstream,
 };
+use redlimitador::{Config, ProxyServer};
 
 // ---------------------------------------------------------------------------
 // Phase 5: Core e2e tests — allowed/blocked flow
