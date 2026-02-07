@@ -47,6 +47,8 @@ You can keep refining the spec document as we work and discover new things, but 
 
 If you receive advice during development, you can add it to this section - will come handy during subsequent iterations.
 
+When adding many tests, add them in groups with commit checkpoints — don't write 15 tests then commit once.
+
 ## Worktree Workflow
 
 When asked to "work on X in a separate worktree", use git worktrees for parallel development so the main working directory stays clean.

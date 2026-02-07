@@ -11,6 +11,7 @@ It is a declarative specification of what we want this product to be: features, 
 ### Core
 - Explicit HTTP proxy mode (clients set `HTTP_PROXY`/`HTTPS_PROXY`)
 - MITM TLS interception for HTTPS traffic via CONNECT tunnels
+- CONNECT restricted to port 443 (non-443 CONNECT requests are blocked)
 - Allowlist rule engine: requests must match at least one rule to be allowed; everything else is blocked with HTTP 451
 - TOML configuration file
 
@@ -90,3 +91,11 @@ websocket = true
     - different protocols (http/1.1, http/2, websocket)
 - tests run in Github Actions
 - test coverage is reported
+
+### E2E Test Architecture
+
+E2e tests exercise the full request flow: client → proxy (MITM) → upstream → response.
+
+The proxy binds to port 0 and exposes its actual address via `bind()` / `serve_until_shutdown()` split on `ProxyServer`.
+
+Since CONNECT is restricted to port 443 but test upstreams run on random ports, `TunnelHandler` supports an `upstream_port_override` that redirects forwarded connections to the test upstream's actual port. Similarly, `upstream_tls_config` allows injecting a `rustls::ClientConfig` that trusts the test CA (instead of webpki roots).
