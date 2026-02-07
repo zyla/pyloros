@@ -1,8 +1,6 @@
 //! MITM certificate generation with caching
 
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use rustls::server::ResolvesServerCert;
-use rustls::sign::CertifiedKey;
 use rustls::ServerConfig;
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,7 +33,11 @@ impl MitmCertificateGenerator {
     }
 
     /// Create with custom cache settings
-    pub fn with_cache(ca: CertificateAuthority, cache_capacity: usize, cache_ttl: Duration) -> Self {
+    pub fn with_cache(
+        ca: CertificateAuthority,
+        cache_capacity: usize,
+        cache_ttl: Duration,
+    ) -> Self {
         Self {
             ca: Arc::new(ca),
             cache: CertificateCache::new(cache_capacity, cache_ttl),
@@ -75,7 +77,9 @@ impl MitmCertificateGenerator {
         let config = ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(cert_chain, key)
-            .map_err(|e| crate::error::Error::tls(format!("Failed to build server config: {}", e)))?;
+            .map_err(|e| {
+                crate::error::Error::tls(format!("Failed to build server config: {}", e))
+            })?;
 
         Ok(config)
     }
@@ -88,33 +92,6 @@ impl MitmCertificateGenerator {
     /// Get cache statistics
     pub fn cache_size(&self) -> usize {
         self.cache.len()
-    }
-}
-
-/// A certificate resolver that generates MITM certificates on demand
-#[derive(Debug)]
-pub struct MitmCertResolver {
-    generator: Arc<MitmCertificateGenerator>,
-    hostname: String,
-}
-
-impl MitmCertResolver {
-    pub fn new(generator: Arc<MitmCertificateGenerator>, hostname: String) -> Self {
-        Self { generator, hostname }
-    }
-}
-
-impl ResolvesServerCert for MitmCertResolver {
-    fn resolve(
-        &self,
-        _client_hello: rustls::server::ClientHello<'_>,
-    ) -> Option<Arc<CertifiedKey>> {
-        let (cert, key) = self.generator.get_cert_for_host(&self.hostname).ok()?;
-        let ca_cert = self.generator.ca_cert_der().clone();
-
-        let signing_key = rustls::crypto::aws_lc_rs::sign::any_supported_type(&key).ok()?;
-
-        Some(Arc::new(CertifiedKey::new(vec![cert, ca_cert], signing_key)))
     }
 }
 
