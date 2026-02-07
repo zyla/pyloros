@@ -6,12 +6,16 @@ A default-deny allowlist-based HTTPS filtering proxy for controlling AI agent ne
 
 It is a declarative specification of what we want this product to be: features, technical choices (libraries, protocols, testing strategy), and configuration format. Code should ultimately be maintained to match the requirements here. When we want to change something in the product, we first modify the SPEC.
 
+## Deployment Model
+
+The intended deployment is one proxy per VM/container running an AI agent. All outbound traffic from the agent is routed through the proxy via `HTTP_PROXY`/`HTTPS_PROXY` environment variables, giving the proxy full visibility and control over the agent's network access.
+
 ## Features
 
 > **Status convention:** All features are implemented and tested unless marked with `(planned)`. Remove the marker once implemented. Agents: scan for `(planned)` to find remaining work.
 
 ### Core
-- Explicit HTTP proxy mode (clients set `HTTP_PROXY`/`HTTPS_PROXY`)
+- Explicit HTTP proxy mode (clients configured via `HTTP_PROXY`/`HTTPS_PROXY` env vars)
 - MITM TLS interception for HTTPS traffic via CONNECT tunnels
 - CONNECT restricted to port 443 (non-443 CONNECT requests are blocked)
 - Allowlist rule engine: requests must match at least one rule to be allowed; everything else is blocked with HTTP 451
@@ -68,6 +72,10 @@ subcommands:
 bind_address = "127.0.0.1:8080"
 ca_cert = "/path/to/ca.crt"
 ca_key = "/path/to/ca.key"
+# Optional: override upstream port for all CONNECT forwards (testing only)
+# upstream_override_port = 9443
+# Optional: PEM CA cert to trust for upstream TLS (testing only)
+# upstream_tls_ca = "/path/to/upstream-ca.crt"
 
 [logging]
 level = "info"
@@ -109,3 +117,9 @@ E2e tests exercise the full request flow: client → proxy (MITM) → upstream �
 The proxy binds to port 0 and exposes its actual address via `bind()` / `serve_until_shutdown()` split on `ProxyServer`.
 
 Since CONNECT is restricted to port 443 but test upstreams run on random ports, `TunnelHandler` supports an `upstream_port_override` that redirects forwarded connections to the test upstream's actual port. Similarly, `upstream_tls_config` allows injecting a `rustls::ClientConfig` that trusts the test CA (instead of webpki roots).
+
+These overrides are also exposed as optional config fields (`upstream_override_port`, `upstream_tls_ca`) so that binary-level tests can exercise the real CLI binary with `curl`.
+
+### Binary-Level Tests
+
+Binary-level smoke tests spawn the actual `redlimitador` binary and drive it with `curl`. They verify end-to-end behavior including config parsing, CLI argument handling, and process lifecycle. The proxy prints its actual listening address to stderr so tests can use `bind_address = "127.0.0.1:0"` and discover the port at runtime. `curl` is configured via the `HTTPS_PROXY` environment variable — the same mechanism real clients use — rather than `--proxy` flags.

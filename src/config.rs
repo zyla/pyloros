@@ -33,6 +33,14 @@ pub struct ProxyConfig {
 
     /// Path to CA private key for MITM
     pub ca_key: Option<String>,
+
+    /// Override upstream port for all CONNECT forwards (testing only)
+    #[serde(default)]
+    pub upstream_override_port: Option<u16>,
+
+    /// Path to PEM CA cert to trust for upstream TLS (testing only)
+    #[serde(default)]
+    pub upstream_tls_ca: Option<String>,
 }
 
 impl Default for ProxyConfig {
@@ -41,6 +49,8 @@ impl Default for ProxyConfig {
             bind_address: default_bind_address(),
             ca_cert: None,
             ca_key: None,
+            upstream_override_port: None,
+            upstream_tls_ca: None,
         }
     }
 }
@@ -161,6 +171,8 @@ impl Config {
                 bind_address,
                 ca_cert: Some(ca_cert),
                 ca_key: Some(ca_key),
+                upstream_override_port: None,
+                upstream_tls_ca: None,
             },
             logging: LoggingConfig::default(),
             rules: Vec::new(),
@@ -321,6 +333,37 @@ level = "warn"
         let config = Config::parse(toml).unwrap();
         assert!(config.logging.log_allowed_requests);
         assert!(config.logging.log_blocked_requests);
+    }
+
+    #[test]
+    fn test_upstream_override_fields() {
+        let toml = r#"
+[proxy]
+bind_address = "127.0.0.1:0"
+ca_cert = "/path/to/ca.crt"
+ca_key = "/path/to/ca.key"
+upstream_override_port = 9443
+upstream_tls_ca = "/path/to/upstream-ca.crt"
+"#;
+
+        let config = Config::parse(toml).unwrap();
+        assert_eq!(config.proxy.upstream_override_port, Some(9443));
+        assert_eq!(
+            config.proxy.upstream_tls_ca,
+            Some("/path/to/upstream-ca.crt".to_string())
+        );
+    }
+
+    #[test]
+    fn test_upstream_override_fields_default_to_none() {
+        let toml = r#"
+[proxy]
+bind_address = "127.0.0.1:8080"
+"#;
+
+        let config = Config::parse(toml).unwrap();
+        assert_eq!(config.proxy.upstream_override_port, None);
+        assert_eq!(config.proxy.upstream_tls_ca, None);
     }
 
     #[test]

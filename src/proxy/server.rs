@@ -102,7 +102,10 @@ impl ProxyServer {
             .await
             .map_err(|e| Error::proxy(format!("Failed to bind to {}: {}", addr, e)))?;
 
-        tracing::info!(address = %addr, "Proxy server listening");
+        let local_addr = listener
+            .local_addr()
+            .map_err(|e| Error::proxy(format!("Failed to get local address: {}", e)))?;
+        tracing::info!(address = %local_addr, "Proxy server listening");
 
         let tunnel_handler = Arc::new(self.make_tunnel_handler());
 
@@ -166,7 +169,10 @@ impl ProxyServer {
             .await
             .map_err(|e| Error::proxy(format!("Failed to bind to {}: {}", addr, e)))?;
 
-        tracing::info!(address = %addr, "Proxy server listening");
+        let local_addr = listener
+            .local_addr()
+            .map_err(|e| Error::proxy(format!("Failed to get local address: {}", e)))?;
+        tracing::info!(address = %local_addr, "Proxy server listening");
 
         let tunnel_handler = Arc::new(self.make_tunnel_handler());
 
