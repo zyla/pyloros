@@ -42,6 +42,33 @@ You can keep refining the spec document as we work and discover new things, but 
 
 If you receive advice during development, you can add it to this section - will come handy during subsequent iterations.
 
+## Worktree Workflow
+
+When asked to "work on X in a separate worktree", use git worktrees for parallel development so the main working directory stays clean.
+
+**Setup:**
+
+```bash
+git branch claude/<feature-slug> main
+mkdir -p ../redlimitador-worktrees
+git worktree add ../redlimitador-worktrees/<feature-slug> claude/<feature-slug>
+```
+
+**Branch naming**: `claude/<feature-slug>` (lowercase, hyphen-separated).
+
+**Location**: worktrees live in `../redlimitador-worktrees/<slug>/` (a sibling directory, not a subdirectory) so Grep/Glob don't find duplicate files.
+
+**During development**: use absolute paths for all commands since shell state resets between Bash calls. Follow the same dev process (tests, commits, TASKS.md updates).
+
+**Finishing**: default to `gh pr create`. For trivial changes where a PR would be overkill, merge locally. Ask the user if unclear.
+
+**Cleanup** (after merge/PR):
+
+```bash
+git worktree remove ../redlimitador-worktrees/<feature-slug>
+git branch -d claude/<feature-slug>
+```
+
 ## Architecture
 
 See `devdocs/SPEC.md` for product spec (features, configuration format, technical decisions).
