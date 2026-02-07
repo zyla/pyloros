@@ -3,10 +3,10 @@
 use bytes::Bytes;
 use http_body_util::{combinators::BoxBody, BodyExt, Full};
 use hyper::body::Incoming;
-use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::server::conn::auto;
 use rustls::ClientConfig;
 use std::sync::Arc;
 use tokio::net::TcpStream;
@@ -100,14 +100,12 @@ impl TunnelHandler {
             }
         });
 
-        // Serve HTTP/1.1 over the TLS connection
+        // Serve HTTP/1.1 or HTTP/2 over the TLS connection (auto-detected via ALPN)
         let io = TokioIo::new(client_tls);
-        if let Err(e) = http1::Builder::new()
-            .preserve_header_case(true)
-            .serve_connection(io, service)
-            .with_upgrades()
-            .await
-        {
+        let mut builder = auto::Builder::new(TokioExecutor::new());
+        builder.http1().preserve_header_case(true).half_close(true);
+
+        if let Err(e) = builder.serve_connection_with_upgrades(io, service).await {
             // Connection closed errors are normal
             let err_str = e.to_string();
             if !err_str.contains("connection closed") && !err_str.contains("early eof") {
@@ -198,17 +196,17 @@ async fn forward_request(
         .await
         .map_err(|e| Error::proxy(format!("Failed to connect to {}: {}", addr, e)))?;
 
-    // Set up TLS for upstream connection
+    // Set up TLS for upstream connection (with ALPN for h2 negotiation)
     let client_config = match upstream_tls_config {
         Some(config) => config,
         None => {
             let mut root_store = rustls::RootCertStore::empty();
             root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-            Arc::new(
-                ClientConfig::builder()
-                    .with_root_certificates(root_store)
-                    .with_no_client_auth(),
-            )
+            let mut config = ClientConfig::builder()
+                .with_root_certificates(root_store)
+                .with_no_client_auth();
+            config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+            Arc::new(config)
         }
     };
 
@@ -222,49 +220,67 @@ async fn forward_request(
         .await
         .map_err(|e| Error::tls(format!("TLS connection to {} failed: {}", host, e)))?;
 
-    let io = TokioIo::new(tls_stream);
+    // Check negotiated ALPN protocol
+    let negotiated_h2 = tls_stream.get_ref().1.alpn_protocol() == Some(b"h2".as_slice());
+    tracing::debug!(host = %host, h2 = negotiated_h2, "Upstream TLS handshake complete");
 
-    // Create HTTP connection
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(io)
-        .await
-        .map_err(|e| Error::proxy(format!("HTTP handshake failed: {}", e)))?;
-
-    // Spawn connection driver
-    tokio::spawn(async move {
-        if let Err(e) = conn.await {
-            tracing::debug!("Connection error: {}", e);
-        }
-    });
-
-    // Rebuild the request with proper host header
+    // Rebuild the request with proper host header before handshake
     let (parts, body) = req.into_parts();
     let mut builder = Request::builder().method(parts.method).uri(parts.uri);
-
-    // Copy headers
     for (name, value) in parts.headers.iter() {
-        // Update Host header to match actual target
         if name == hyper::header::HOST {
             builder = builder.header(name, format!("{}:{}", host, port));
         } else {
             builder = builder.header(name, value);
         }
     }
-
     let req = builder
         .body(body)
         .map_err(|e| Error::proxy(format!("Failed to build request: {}", e)))?;
 
-    // Send request
-    let resp = sender
-        .send_request(req)
-        .await
-        .map_err(|e| Error::proxy(format!("Request failed: {}", e)))?;
+    let io = TokioIo::new(tls_stream);
 
-    // Convert response body
-    let (parts, body) = resp.into_parts();
-    let body = body.map_err(|e| e).boxed();
+    if negotiated_h2 {
+        // HTTP/2 handshake
+        let (mut sender, conn) = hyper::client::conn::http2::handshake(TokioExecutor::new(), io)
+            .await
+            .map_err(|e| Error::proxy(format!("HTTP/2 handshake failed: {}", e)))?;
 
-    Ok(Response::from_parts(parts, body))
+        tokio::spawn(async move {
+            if let Err(e) = conn.await {
+                tracing::debug!("HTTP/2 connection error: {}", e);
+            }
+        });
+
+        let resp = sender
+            .send_request(req)
+            .await
+            .map_err(|e| Error::proxy(format!("HTTP/2 request failed: {}", e)))?;
+
+        let (parts, body) = resp.into_parts();
+        let body = body.map_err(|e| e).boxed();
+        Ok(Response::from_parts(parts, body))
+    } else {
+        // HTTP/1.1 handshake
+        let (mut sender, conn) = hyper::client::conn::http1::handshake(io)
+            .await
+            .map_err(|e| Error::proxy(format!("HTTP handshake failed: {}", e)))?;
+
+        tokio::spawn(async move {
+            if let Err(e) = conn.await {
+                tracing::debug!("Connection error: {}", e);
+            }
+        });
+
+        let resp = sender
+            .send_request(req)
+            .await
+            .map_err(|e| Error::proxy(format!("Request failed: {}", e)))?;
+
+        let (parts, body) = resp.into_parts();
+        let body = body.map_err(|e| e).boxed();
+        Ok(Response::from_parts(parts, body))
+    }
 }
 
 /// Create an HTTP 451 response for blocked requests

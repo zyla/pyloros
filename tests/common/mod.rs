@@ -6,7 +6,8 @@ use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::server::conn::auto;
 use redlimitador::tls::{CertificateAuthority, GeneratedCa};
 use redlimitador::{Config, ProxyServer};
 use rustls::pki_types::CertificateDer;
@@ -55,27 +56,39 @@ impl TestCa {
         }
     }
 
-    /// Build a rustls ClientConfig that trusts this CA.
+    /// Build a rustls ClientConfig that trusts this CA (with h2 + h1 ALPN).
     pub fn client_tls_config(&self) -> Arc<ClientConfig> {
         let mut root_store = rustls::RootCertStore::empty();
         root_store.add(self.cert_der.clone()).unwrap();
-        Arc::new(
-            ClientConfig::builder()
-                .with_root_certificates(root_store)
-                .with_no_client_auth(),
-        )
+        let mut config = ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+        Arc::new(config)
     }
 
-    /// Build a rustls ServerConfig for a given hostname signed by this CA.
+    /// Build a rustls ServerConfig for a given hostname signed by this CA (with h2 + h1 ALPN).
     pub fn server_tls_config(&self, hostname: &str) -> Arc<ServerConfig> {
         let (cert, key) = self.ca.generate_cert_for_host(hostname).unwrap();
         let cert_chain = vec![cert, self.cert_der.clone()];
-        Arc::new(
-            ServerConfig::builder()
-                .with_no_client_auth()
-                .with_single_cert(cert_chain, key)
-                .unwrap(),
-        )
+        let mut config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(cert_chain, key)
+            .unwrap();
+        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+        Arc::new(config)
+    }
+
+    /// Build a rustls ServerConfig that only advertises HTTP/1.1 ALPN.
+    pub fn server_tls_config_h1_only(&self, hostname: &str) -> Arc<ServerConfig> {
+        let (cert, key) = self.ca.generate_cert_for_host(hostname).unwrap();
+        let cert_chain = vec![cert, self.cert_der.clone()];
+        let mut config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(cert_chain, key)
+            .unwrap();
+        config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        Arc::new(config)
     }
 }
 
@@ -107,9 +120,20 @@ impl TestUpstream {
         Self::start_for_host(ca, "localhost", handler).await
     }
 
-    /// Start a test upstream HTTPS server with a cert for the given hostname.
+    /// Start a test upstream HTTPS server with a cert for the given hostname (h2 + h1).
     pub async fn start_for_host(ca: &TestCa, hostname: &str, handler: UpstreamHandler) -> Self {
         let server_config = ca.server_tls_config(hostname);
+        Self::start_with_config(server_config, handler).await
+    }
+
+    /// Start a test upstream HTTPS server that only speaks HTTP/1.1.
+    pub async fn start_h1_only(ca: &TestCa, handler: UpstreamHandler) -> Self {
+        let server_config = ca.server_tls_config_h1_only("localhost");
+        Self::start_with_config(server_config, handler).await
+    }
+
+    async fn start_with_config(server_config: Arc<ServerConfig>, handler: UpstreamHandler) -> Self {
+        let h1_only = !server_config.alpn_protocols.iter().any(|p| p == b"h2");
         let acceptor = TlsAcceptor::from(server_config);
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -142,9 +166,15 @@ impl TestUpstream {
                                 handler(req)
                             });
 
-                            let _ = http1::Builder::new()
-                                .serve_connection(io, service)
-                                .await;
+                            if h1_only {
+                                let _ = http1::Builder::new()
+                                    .serve_connection(io, service)
+                                    .await;
+                            } else {
+                                let _ = auto::Builder::new(TokioExecutor::new())
+                                    .serve_connection_with_upgrades(io, service)
+                                    .await;
+                            }
                         });
                     }
                 }
@@ -261,6 +291,7 @@ impl TestProxy {
 // ---------------------------------------------------------------------------
 
 /// Build a reqwest client that routes through the given proxy and trusts the test CA.
+/// By default reqwest negotiates h2 when available.
 pub fn test_client(proxy_addr: SocketAddr, ca: &TestCa) -> reqwest::Client {
     let proxy_url = format!("http://{}", proxy_addr);
     let proxy = reqwest::Proxy::all(&proxy_url).unwrap();
@@ -270,6 +301,21 @@ pub fn test_client(proxy_addr: SocketAddr, ca: &TestCa) -> reqwest::Client {
     reqwest::Client::builder()
         .proxy(proxy)
         .add_root_certificate(ca_cert)
+        .build()
+        .unwrap()
+}
+
+/// Build a reqwest client that forces HTTP/1.1 only (no h2 negotiation).
+pub fn test_client_h1_only(proxy_addr: SocketAddr, ca: &TestCa) -> reqwest::Client {
+    let proxy_url = format!("http://{}", proxy_addr);
+    let proxy = reqwest::Proxy::all(&proxy_url).unwrap();
+
+    let ca_cert = reqwest::tls::Certificate::from_pem(ca.cert_pem.as_bytes()).unwrap();
+
+    reqwest::Client::builder()
+        .proxy(proxy)
+        .add_root_certificate(ca_cert)
+        .http1_only()
         .build()
         .unwrap()
 }

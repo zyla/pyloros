@@ -113,8 +113,11 @@ fn test_server_config_generation() {
     // Should be able to create a server config
     let config = gen.server_config_for_host("example.com").unwrap();
 
-    // Basic validation - config should exist
-    assert!(config.alpn_protocols.is_empty()); // Default has no ALPN
+    // Verify ALPN is set for h2 + h1
+    assert_eq!(
+        config.alpn_protocols,
+        vec![b"h2".to_vec(), b"http/1.1".to_vec()]
+    );
 }
 
 #[test]

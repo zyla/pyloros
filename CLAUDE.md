@@ -39,9 +39,9 @@ When facing design decisions, do the simpler thing but save it in devdocs/QUESTI
 
 Any problems encountered with tools (build system, etc.) should also be documented in QUESTIONS.md under "Tool Issues Encountered" for future reference.
 
-Commit after each phase/step is achieved and verified - don't accumulate too many changes before committing. When following a multi-phase plan, commit immediately after each phase passes its verification tests. When a piece of work is done and tested, commit immediately - don't wait for explicit instruction.
+IMPORTANT: Commit immediately and automatically whenever a piece of work is done and verified. NEVER wait for the user to say "commit" — if it's done, commit it. This applies to every change: code, config, docs, anything. Don't accumulate changes. When following a multi-phase plan, commit after each phase passes its verification tests.
 
-Use e2e tests (and other types if suitable) to verify all functionality you're implementing, don't just wing it.
+IMPORTANT: Every requirement in SPEC.md must be verified by tests. Prefer e2e tests by default; use unit tests only when e2e testing is not feasible for a particular requirement. Don't just wing it — if a feature isn't tested, it's not done.
 
 You can keep refining the spec document as we work and discover new things, but confirm with human for major changes.
 
@@ -51,7 +51,7 @@ When adding many tests, add them in groups with commit checkpoints — don't wri
 
 ## Worktree Workflow
 
-When asked to "work on X in a separate worktree", use git worktrees for parallel development so the main working directory stays clean.
+**Always** use git worktrees for development work so the main working directory stays clean. Do not work directly on main.
 
 **Setup:**
 
