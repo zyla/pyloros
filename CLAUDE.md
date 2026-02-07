@@ -43,6 +43,8 @@ IMPORTANT: Commit immediately and automatically whenever a piece of work is done
 
 IMPORTANT: Every requirement in SPEC.md must be verified by tests. Prefer e2e tests by default; use unit tests only when e2e testing is not feasible for a particular requirement. Don't just wing it — if a feature isn't tested, it's not done.
 
+IMPORTANT: If asked to implement something that's not in SPEC.md, insist on adding it to the spec first before writing any code.
+
 You can keep refining the spec document as we work and discover new things, but confirm with human for major changes.
 
 If you receive advice during development, you can add it to this section - will come handy during subsequent iterations.
