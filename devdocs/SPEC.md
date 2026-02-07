@@ -123,3 +123,16 @@ These overrides are also exposed as optional config fields (`upstream_override_p
 ### Binary-Level Tests
 
 Binary-level smoke tests spawn the actual `redlimitador` binary and drive it with `curl`. They verify end-to-end behavior including config parsing, CLI argument handling, and process lifecycle. The proxy prints its actual listening address to stderr so tests can use `bind_address = "127.0.0.1:0"` and discover the port at runtime. `curl` is configured via the `HTTPS_PROXY` environment variable — the same mechanism real clients use — rather than `--proxy` flags.
+
+## Documentation
+
+The project README (`README.md`) must contain:
+
+- Project name, tagline, and brief description of what it does and why
+- Overview of the deployment model (one proxy per VM/container)
+- Quick-start guide: generate CA, create config, start proxy, configure client
+- Configuration reference with example covering `[proxy]`, `[logging]`, and `[[rules]]` sections
+- CLI reference for all subcommands (`run`, `generate-ca`, `validate-config`) with flags
+- Build from source instructions (prerequisites, cargo build)
+- How to run tests
+- License (MIT)
