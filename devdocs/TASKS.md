@@ -12,3 +12,9 @@ Dear agent, track progress here
   - [x] Header forwarding, error handling, large body tests
   - [x] Fix rcgen CA cert chain verification (from_ca_cert_der)
 - [x] Add GitHub Actions CI (fmt, clippy, tests, coverage)
+- [x] Add HTTP/2 support
+  - [x] ALPN [h2, http/1.1] on MITM ServerConfig (client ↔ proxy)
+  - [x] auto::Builder for MITM tunnel (auto-detect h1/h2 via ALPN)
+  - [x] ALPN on upstream ClientConfig + protocol branching (proxy ↔ upstream)
+  - [x] Test infrastructure: h2-capable TestUpstream, h1-only variants, test_client_h1_only
+  - [x] E2E tests: h2 allowed, h1↔h2 protocol translation, h2 blocked 451, h2 large body
