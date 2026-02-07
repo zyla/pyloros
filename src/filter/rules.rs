@@ -170,6 +170,7 @@ impl Default for FilterEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_report;
 
     fn make_rule(method: &str, url: &str) -> Rule {
         Rule {
@@ -189,13 +190,15 @@ mod tests {
 
     #[test]
     fn test_empty_engine_blocks_all() {
+        let t = test_report!("Empty engine blocks all requests");
         let engine = FilterEngine::empty();
         let request = RequestInfo::http("GET", "https", "example.com", None, "/", None);
-        assert!(!engine.is_allowed(&request));
+        t.assert_true("GET / blocked", !engine.is_allowed(&request));
     }
 
     #[test]
     fn test_exact_match() {
+        let t = test_report!("Exact URL match");
         let engine =
             FilterEngine::new(vec![make_rule("GET", "https://api.example.com/health")]).unwrap();
 
@@ -205,149 +208,110 @@ mod tests {
         let wrong_path = RequestInfo::http("GET", "https", "api.example.com", None, "/other", None);
         let wrong_host = RequestInfo::http("GET", "https", "other.com", None, "/health", None);
 
-        assert!(engine.is_allowed(&allowed));
-        assert!(!engine.is_allowed(&wrong_method));
-        assert!(!engine.is_allowed(&wrong_path));
-        assert!(!engine.is_allowed(&wrong_host));
+        t.assert_true("exact match allowed", engine.is_allowed(&allowed));
+        t.assert_true("wrong method blocked", !engine.is_allowed(&wrong_method));
+        t.assert_true("wrong path blocked", !engine.is_allowed(&wrong_path));
+        t.assert_true("wrong host blocked", !engine.is_allowed(&wrong_host));
     }
 
     #[test]
     fn test_wildcard_method() {
+        let t = test_report!("Wildcard method * matches all");
         let engine = FilterEngine::new(vec![make_rule("*", "https://cdn.example.com/*")]).unwrap();
 
-        assert!(engine.is_allowed(&RequestInfo::http(
-            "GET",
-            "https",
-            "cdn.example.com",
-            None,
-            "/file.js",
-            None
-        )));
-        assert!(engine.is_allowed(&RequestInfo::http(
-            "POST",
-            "https",
-            "cdn.example.com",
-            None,
-            "/upload",
-            None
-        )));
-        assert!(engine.is_allowed(&RequestInfo::http(
-            "DELETE",
-            "https",
-            "cdn.example.com",
-            None,
-            "/file",
-            None
-        )));
+        for method in ["GET", "POST", "DELETE"] {
+            let req = RequestInfo::http(method, "https", "cdn.example.com", None, "/file", None);
+            t.assert_true(&format!("{} allowed", method), engine.is_allowed(&req));
+        }
     }
 
     #[test]
     fn test_wildcard_host() {
+        let t = test_report!("Wildcard host *.github.com");
         let engine =
             FilterEngine::new(vec![make_rule("GET", "https://*.github.com/api/*")]).unwrap();
 
-        assert!(engine.is_allowed(&RequestInfo::http(
-            "GET",
-            "https",
-            "api.github.com",
-            None,
-            "/api/repos",
-            None
-        )));
-        assert!(engine.is_allowed(&RequestInfo::http(
-            "GET",
-            "https",
-            "raw.github.com",
-            None,
-            "/api/files",
-            None
-        )));
-        assert!(!engine.is_allowed(&RequestInfo::http(
-            "GET",
-            "https",
-            "github.com",
-            None,
-            "/api/repos",
-            None
-        )));
+        let api = RequestInfo::http("GET", "https", "api.github.com", None, "/api/repos", None);
+        let raw = RequestInfo::http("GET", "https", "raw.github.com", None, "/api/files", None);
+        let bare = RequestInfo::http("GET", "https", "github.com", None, "/api/repos", None);
+
+        t.assert_true("api.github.com allowed", engine.is_allowed(&api));
+        t.assert_true("raw.github.com allowed", engine.is_allowed(&raw));
+        t.assert_true("github.com blocked", !engine.is_allowed(&bare));
     }
 
     #[test]
     fn test_wildcard_path() {
+        let t = test_report!("Wildcard path /users/*/comments");
         let engine = FilterEngine::new(vec![make_rule(
             "POST",
             "https://api.example.com/users/*/comments",
         )])
         .unwrap();
 
-        assert!(engine.is_allowed(&RequestInfo::http(
+        let single = RequestInfo::http(
             "POST",
             "https",
             "api.example.com",
             None,
             "/users/123/comments",
-            None
-        )));
-        assert!(engine.is_allowed(&RequestInfo::http(
+            None,
+        );
+        let multi = RequestInfo::http(
             "POST",
             "https",
             "api.example.com",
             None,
             "/users/abc/def/comments",
-            None
-        )));
-        assert!(!engine.is_allowed(&RequestInfo::http(
+            None,
+        );
+        let empty = RequestInfo::http(
             "POST",
             "https",
             "api.example.com",
             None,
             "/users/comments",
-            None
-        )));
+            None,
+        );
+
+        t.assert_true("single segment allowed", engine.is_allowed(&single));
+        t.assert_true("multi segment allowed", engine.is_allowed(&multi));
+        t.assert_true("no segment blocked", !engine.is_allowed(&empty));
     }
 
     #[test]
     fn test_query_matching() {
+        let t = test_report!("Query string wildcard matching");
         let engine =
             FilterEngine::new(vec![make_rule("GET", "https://api.example.com/search?q=*")])
                 .unwrap();
 
-        assert!(engine.is_allowed(&RequestInfo::http(
+        let with_q = RequestInfo::http(
             "GET",
             "https",
             "api.example.com",
             None,
             "/search",
-            Some("q=test")
-        )));
-        assert!(engine.is_allowed(&RequestInfo::http(
+            Some("q=test"),
+        );
+        let no_q = RequestInfo::http("GET", "https", "api.example.com", None, "/search", None);
+        let wrong_q = RequestInfo::http(
             "GET",
             "https",
             "api.example.com",
             None,
             "/search",
-            Some("q=anything")
-        )));
-        assert!(!engine.is_allowed(&RequestInfo::http(
-            "GET",
-            "https",
-            "api.example.com",
-            None,
-            "/search",
-            None
-        )));
-        assert!(!engine.is_allowed(&RequestInfo::http(
-            "GET",
-            "https",
-            "api.example.com",
-            None,
-            "/search",
-            Some("other=param")
-        )));
+            Some("other=param"),
+        );
+
+        t.assert_true("q=test allowed", engine.is_allowed(&with_q));
+        t.assert_true("no query blocked", !engine.is_allowed(&no_q));
+        t.assert_true("wrong query blocked", !engine.is_allowed(&wrong_q));
     }
 
     #[test]
     fn test_multiple_rules() {
+        let t = test_report!("Multiple rules OR matching");
         let engine = FilterEngine::new(vec![
             make_rule("GET", "https://api.example.com/public/*"),
             make_rule("POST", "https://api.example.com/data"),
@@ -355,137 +319,87 @@ mod tests {
         ])
         .unwrap();
 
-        assert!(engine.is_allowed(&RequestInfo::http(
+        let public = RequestInfo::http(
             "GET",
             "https",
             "api.example.com",
             None,
             "/public/info",
-            None
-        )));
-        assert!(engine.is_allowed(&RequestInfo::http(
-            "POST",
-            "https",
-            "api.example.com",
             None,
-            "/data",
-            None
-        )));
-        assert!(engine.is_allowed(&RequestInfo::http(
-            "PUT",
-            "https",
-            "cdn.example.com",
-            None,
-            "/file",
-            None
-        )));
-        assert!(!engine.is_allowed(&RequestInfo::http(
-            "DELETE",
-            "https",
-            "api.example.com",
-            None,
-            "/data",
-            None
-        )));
+        );
+        let data = RequestInfo::http("POST", "https", "api.example.com", None, "/data", None);
+        let cdn = RequestInfo::http("PUT", "https", "cdn.example.com", None, "/file", None);
+        let blocked = RequestInfo::http("DELETE", "https", "api.example.com", None, "/data", None);
+
+        t.assert_true("GET /public/* allowed", engine.is_allowed(&public));
+        t.assert_true("POST /data allowed", engine.is_allowed(&data));
+        t.assert_true("PUT cdn/* allowed", engine.is_allowed(&cdn));
+        t.assert_true("DELETE /data blocked", !engine.is_allowed(&blocked));
     }
 
     #[test]
     fn test_websocket_rules() {
+        let t = test_report!("WebSocket vs HTTP rule isolation");
         let engine = FilterEngine::new(vec![
             make_rule("GET", "https://api.example.com/http"),
             make_ws_rule("wss://api.example.com/socket"),
         ])
         .unwrap();
 
-        // HTTP request should match HTTP rule
-        assert!(engine.is_allowed(&RequestInfo::http(
-            "GET",
-            "https",
-            "api.example.com",
-            None,
-            "/http",
-            None
-        )));
+        let http_req = RequestInfo::http("GET", "https", "api.example.com", None, "/http", None);
+        let ws_req = RequestInfo::websocket("https", "api.example.com", None, "/socket", None);
+        let ws_on_http = RequestInfo::websocket("https", "api.example.com", None, "/http", None);
+        let http_on_ws =
+            RequestInfo::http("GET", "https", "api.example.com", None, "/socket", None);
 
-        // WebSocket should match WebSocket rule
-        assert!(engine.is_allowed(&RequestInfo::websocket(
-            "https",
-            "api.example.com",
-            None,
-            "/socket",
-            None
-        )));
-
-        // WebSocket should NOT match HTTP rule
-        assert!(!engine.is_allowed(&RequestInfo::websocket(
-            "https",
-            "api.example.com",
-            None,
-            "/http",
-            None
-        )));
-
-        // HTTP should NOT match WebSocket rule
-        assert!(!engine.is_allowed(&RequestInfo::http(
-            "GET",
-            "https",
-            "api.example.com",
-            None,
-            "/socket",
-            None
-        )));
+        t.assert_true("HTTP matches HTTP rule", engine.is_allowed(&http_req));
+        t.assert_true("WS matches WS rule", engine.is_allowed(&ws_req));
+        t.assert_true(
+            "WS does NOT match HTTP rule",
+            !engine.is_allowed(&ws_on_http),
+        );
+        t.assert_true(
+            "HTTP does NOT match WS rule",
+            !engine.is_allowed(&http_on_ws),
+        );
     }
 
     #[test]
     fn test_port_matching() {
+        let t = test_report!("Port matching in rules");
         let engine =
             FilterEngine::new(vec![make_rule("GET", "https://api.example.com:8443/api")]).unwrap();
 
-        assert!(engine.is_allowed(&RequestInfo::http(
-            "GET",
-            "https",
-            "api.example.com",
-            Some(8443),
-            "/api",
-            None
-        )));
-        assert!(!engine.is_allowed(&RequestInfo::http(
-            "GET",
-            "https",
-            "api.example.com",
-            Some(443),
-            "/api",
-            None
-        )));
-        assert!(!engine.is_allowed(&RequestInfo::http(
-            "GET",
-            "https",
-            "api.example.com",
-            None,
-            "/api",
-            None
-        )));
+        let correct =
+            RequestInfo::http("GET", "https", "api.example.com", Some(8443), "/api", None);
+        let wrong = RequestInfo::http("GET", "https", "api.example.com", Some(443), "/api", None);
+        let none = RequestInfo::http("GET", "https", "api.example.com", None, "/api", None);
+
+        t.assert_true("port 8443 allowed", engine.is_allowed(&correct));
+        t.assert_true("port 443 blocked", !engine.is_allowed(&wrong));
+        t.assert_true("no port blocked", !engine.is_allowed(&none));
     }
 
     #[test]
     fn test_case_insensitive_method() {
+        let t = test_report!("Case-insensitive method matching");
         let engine =
             FilterEngine::new(vec![make_rule("get", "https://api.example.com/test")]).unwrap();
 
-        assert!(engine.is_allowed(&RequestInfo::http(
-            "GET",
-            "https",
-            "api.example.com",
-            None,
-            "/test",
-            None
-        )));
+        let req = RequestInfo::http("GET", "https", "api.example.com", None, "/test", None);
+        t.assert_true("GET matches 'get'", engine.is_allowed(&req));
     }
 
     #[test]
     fn test_request_info_full_url() {
+        let t = test_report!("RequestInfo::full_url() formatting");
+
         let r1 = RequestInfo::http("GET", "https", "example.com", None, "/path", None);
-        assert_eq!(r1.full_url(), "https://example.com/path");
+        t.assert_eq(
+            "basic",
+            &r1.full_url().as_str(),
+            &"https://example.com/path",
+        );
 
         let r2 = RequestInfo::http(
             "GET",
@@ -495,54 +409,61 @@ mod tests {
             "/path",
             Some("q=1"),
         );
-        assert_eq!(r2.full_url(), "https://example.com:8443/path?q=1");
+        t.assert_eq(
+            "with port+query",
+            &r2.full_url().as_str(),
+            &"https://example.com:8443/path?q=1",
+        );
 
         let r3 = RequestInfo::http("GET", "https", "example.com", Some(443), "/path", None);
-        assert_eq!(r3.full_url(), "https://example.com/path");
+        t.assert_eq(
+            "default port omitted",
+            &r3.full_url().as_str(),
+            &"https://example.com/path",
+        );
     }
 
     #[test]
     fn test_rule_count() {
+        let t = test_report!("FilterEngine::rule_count()");
         let engine = FilterEngine::new(vec![
             make_rule("GET", "https://a.com/"),
             make_rule("GET", "https://b.com/"),
         ])
         .unwrap();
 
-        assert_eq!(engine.rule_count(), 2);
+        t.assert_eq("rule count", &engine.rule_count(), &2usize);
     }
 
     #[test]
     fn test_complex_github_pattern() {
+        let t = test_report!("Complex GitHub-like wildcard patterns");
         let engine = FilterEngine::new(vec![
             make_rule("*", "https://*.github.com/*"),
             make_rule("*", "https://*.githubusercontent.com/*"),
         ])
         .unwrap();
 
-        assert!(engine.is_allowed(&RequestInfo::http(
+        let api = RequestInfo::http(
             "GET",
             "https",
             "api.github.com",
             None,
             "/repos/owner/repo",
-            None
-        )));
-        assert!(engine.is_allowed(&RequestInfo::http(
-            "POST",
-            "https",
-            "api.github.com",
             None,
-            "/graphql",
-            None
-        )));
-        assert!(engine.is_allowed(&RequestInfo::http(
+        );
+        let graphql = RequestInfo::http("POST", "https", "api.github.com", None, "/graphql", None);
+        let raw = RequestInfo::http(
             "GET",
             "https",
             "raw.githubusercontent.com",
             None,
             "/owner/repo/main/file.txt",
-            None
-        )));
+            None,
+        );
+
+        t.assert_true("api.github.com GET", engine.is_allowed(&api));
+        t.assert_true("api.github.com POST", engine.is_allowed(&graphql));
+        t.assert_true("raw.githubusercontent.com", engine.is_allowed(&raw));
     }
 }

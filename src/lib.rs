@@ -29,6 +29,8 @@ pub mod config;
 pub mod error;
 pub mod filter;
 pub mod proxy;
+#[cfg(test)]
+pub mod test_support;
 pub mod tls;
 
 pub use config::Config;

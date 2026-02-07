@@ -231,203 +231,304 @@ impl UrlPattern {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_report;
 
     mod pattern_matcher {
         use super::*;
+        use crate::test_report;
 
         #[test]
         fn test_literal_match() {
+            let t = test_report!("Literal string matching");
             let m = PatternMatcher::new("hello").unwrap();
-            assert!(m.matches("hello"));
-            assert!(!m.matches("hello!"));
-            assert!(!m.matches("hell"));
-            assert!(!m.matches(""));
+            t.assert_true("exact match", m.matches("hello"));
+            t.assert_true("extra char rejected", !m.matches("hello!"));
+            t.assert_true("prefix rejected", !m.matches("hell"));
+            t.assert_true("empty rejected", !m.matches(""));
         }
 
         #[test]
         fn test_wildcard_only() {
+            let t = test_report!("Single wildcard matches everything");
             let m = PatternMatcher::new("*").unwrap();
-            assert!(m.matches(""));
-            assert!(m.matches("anything"));
-            assert!(m.matches("anything/with/slashes"));
+            t.assert_true("empty string", m.matches(""));
+            t.assert_true("any text", m.matches("anything"));
+            t.assert_true("with slashes", m.matches("anything/with/slashes"));
         }
 
         #[test]
         fn test_prefix_wildcard() {
+            let t = test_report!("Prefix wildcard *suffix");
             let m = PatternMatcher::new("*suffix").unwrap();
-            assert!(m.matches("suffix"));
-            assert!(m.matches("prefixsuffix"));
-            assert!(m.matches("any/thing/suffix"));
-            assert!(!m.matches("suffixnot"));
+            t.assert_true("exact suffix", m.matches("suffix"));
+            t.assert_true("with prefix", m.matches("prefixsuffix"));
+            t.assert_true("with slashes", m.matches("any/thing/suffix"));
+            t.assert_true("trailing chars rejected", !m.matches("suffixnot"));
         }
 
         #[test]
         fn test_suffix_wildcard() {
+            let t = test_report!("Suffix wildcard prefix*");
             let m = PatternMatcher::new("prefix*").unwrap();
-            assert!(m.matches("prefix"));
-            assert!(m.matches("prefixsuffix"));
-            assert!(m.matches("prefix/any/thing"));
-            assert!(!m.matches("notprefix"));
+            t.assert_true("exact prefix", m.matches("prefix"));
+            t.assert_true("with suffix", m.matches("prefixsuffix"));
+            t.assert_true("with slashes", m.matches("prefix/any/thing"));
+            t.assert_true("wrong prefix rejected", !m.matches("notprefix"));
         }
 
         #[test]
         fn test_middle_wildcard() {
+            let t = test_report!("Middle wildcard start*end");
             let m = PatternMatcher::new("start*end").unwrap();
-            assert!(m.matches("startend"));
-            assert!(m.matches("startmiddleend"));
-            assert!(m.matches("start/middle/end"));
-            assert!(!m.matches("startendnot"));
-            assert!(!m.matches("notstartend"));
+            t.assert_true("no middle", m.matches("startend"));
+            t.assert_true("with middle", m.matches("startmiddleend"));
+            t.assert_true("with slashes", m.matches("start/middle/end"));
+            t.assert_true("trailing chars rejected", !m.matches("startendnot"));
+            t.assert_true("wrong prefix rejected", !m.matches("notstartend"));
         }
 
         #[test]
         fn test_multiple_wildcards() {
+            let t = test_report!("Multiple wildcards a*b*c");
             let m = PatternMatcher::new("a*b*c").unwrap();
-            assert!(m.matches("abc"));
-            assert!(m.matches("a_b_c"));
-            assert!(m.matches("aXXXbYYYc"));
-            assert!(!m.matches("ab"));
-            assert!(!m.matches("bc"));
+            t.assert_true("minimal", m.matches("abc"));
+            t.assert_true("underscores", m.matches("a_b_c"));
+            t.assert_true("long segments", m.matches("aXXXbYYYc"));
+            t.assert_true("missing c rejected", !m.matches("ab"));
+            t.assert_true("missing a rejected", !m.matches("bc"));
         }
 
         #[test]
         fn test_consecutive_wildcards_collapse() {
+            let t = test_report!("Consecutive ** collapses to *");
             let m = PatternMatcher::new("a**b").unwrap();
-            // Should behave same as "a*b"
-            assert!(m.matches("ab"));
-            assert!(m.matches("aXb"));
+            t.assert_true("no middle", m.matches("ab"));
+            t.assert_true("with middle", m.matches("aXb"));
         }
 
         #[test]
         fn test_path_segments() {
+            let t = test_report!("Wildcard spans path segments");
             let m = PatternMatcher::new("/api/*/data").unwrap();
-            assert!(m.matches("/api/v1/data"));
-            assert!(m.matches("/api/v1/v2/data"));
-            assert!(m.matches("/api//data")); // Empty segment
-            assert!(!m.matches("/api/data"));
-            assert!(!m.matches("/api/v1/datax"));
+            t.assert_true("single segment", m.matches("/api/v1/data"));
+            t.assert_true("multi segment", m.matches("/api/v1/v2/data"));
+            t.assert_true("empty segment", m.matches("/api//data"));
+            t.assert_true("no middle rejected", !m.matches("/api/data"));
+            t.assert_true("extra suffix rejected", !m.matches("/api/v1/datax"));
         }
 
         #[test]
         fn test_host_patterns() {
+            let t = test_report!("Host wildcard *.example.com");
             let m = PatternMatcher::new("*.example.com").unwrap();
-            assert!(m.matches("api.example.com"));
-            assert!(m.matches("a.b.example.com"));
-            assert!(m.matches(".example.com")); // Edge case
-            assert!(!m.matches("example.com"));
-            assert!(!m.matches("notexample.com"));
+            t.assert_true("api subdomain", m.matches("api.example.com"));
+            t.assert_true("deep subdomain", m.matches("a.b.example.com"));
+            t.assert_true("dot prefix edge case", m.matches(".example.com"));
+            t.assert_true("bare domain rejected", !m.matches("example.com"));
+            t.assert_true("different domain rejected", !m.matches("notexample.com"));
         }
 
         #[test]
         fn test_is_literal() {
-            assert!(PatternMatcher::new("literal").unwrap().is_literal());
-            assert!(!PatternMatcher::new("wild*card").unwrap().is_literal());
-            assert!(!PatternMatcher::new("*").unwrap().is_literal());
+            let t = test_report!("is_literal detection");
+            t.assert_true(
+                "literal",
+                PatternMatcher::new("literal").unwrap().is_literal(),
+            );
+            t.assert_true(
+                "wildcard not literal",
+                !PatternMatcher::new("wild*card").unwrap().is_literal(),
+            );
+            t.assert_true(
+                "star not literal",
+                !PatternMatcher::new("*").unwrap().is_literal(),
+            );
         }
     }
 
     mod url_pattern {
         use super::*;
+        use crate::test_report;
 
         #[test]
         fn test_simple_url() {
+            let t = test_report!("Simple URL pattern matching");
             let p = UrlPattern::new("https://example.com/api/health").unwrap();
-            assert!(p.matches("https", "example.com", None, "/api/health", None));
-            assert!(!p.matches("http", "example.com", None, "/api/health", None));
-            assert!(!p.matches("https", "other.com", None, "/api/health", None));
-            assert!(!p.matches("https", "example.com", None, "/api/other", None));
+            t.assert_true(
+                "exact match",
+                p.matches("https", "example.com", None, "/api/health", None),
+            );
+            t.assert_true(
+                "wrong scheme",
+                !p.matches("http", "example.com", None, "/api/health", None),
+            );
+            t.assert_true(
+                "wrong host",
+                !p.matches("https", "other.com", None, "/api/health", None),
+            );
+            t.assert_true(
+                "wrong path",
+                !p.matches("https", "example.com", None, "/api/other", None),
+            );
         }
 
         #[test]
         fn test_wildcard_host() {
+            let t = test_report!("URL pattern with wildcard host");
             let p = UrlPattern::new("https://*.example.com/api/*").unwrap();
-            assert!(p.matches("https", "api.example.com", None, "/api/anything", None));
-            assert!(p.matches("https", "sub.api.example.com", None, "/api/v1/data", None));
-            assert!(!p.matches("https", "example.com", None, "/api/test", None));
+            t.assert_true(
+                "subdomain match",
+                p.matches("https", "api.example.com", None, "/api/anything", None),
+            );
+            t.assert_true(
+                "deep subdomain",
+                p.matches("https", "sub.api.example.com", None, "/api/v1/data", None),
+            );
+            t.assert_true(
+                "bare domain rejected",
+                !p.matches("https", "example.com", None, "/api/test", None),
+            );
         }
 
         #[test]
         fn test_with_port() {
+            let t = test_report!("URL pattern with explicit port");
             let p = UrlPattern::new("https://example.com:8443/api").unwrap();
-            assert!(p.matches("https", "example.com", Some(8443), "/api", None));
-            assert!(!p.matches("https", "example.com", Some(443), "/api", None));
-            assert!(!p.matches("https", "example.com", None, "/api", None));
+            t.assert_true(
+                "correct port",
+                p.matches("https", "example.com", Some(8443), "/api", None),
+            );
+            t.assert_true(
+                "wrong port",
+                !p.matches("https", "example.com", Some(443), "/api", None),
+            );
+            t.assert_true(
+                "no port",
+                !p.matches("https", "example.com", None, "/api", None),
+            );
         }
 
         #[test]
         fn test_default_port() {
+            let t = test_report!("URL pattern with default port 443");
             let p = UrlPattern::new("https://example.com:443/api").unwrap();
-            // None port should match default 443 for https
-            assert!(p.matches("https", "example.com", None, "/api", None));
-            assert!(p.matches("https", "example.com", Some(443), "/api", None));
+            t.assert_true(
+                "None matches default 443",
+                p.matches("https", "example.com", None, "/api", None),
+            );
+            t.assert_true(
+                "explicit 443",
+                p.matches("https", "example.com", Some(443), "/api", None),
+            );
         }
 
         #[test]
         fn test_with_query() {
+            let t = test_report!("URL pattern with query wildcards");
             let p = UrlPattern::new("https://api.com/search?q=*&limit=*").unwrap();
-            assert!(p.matches("https", "api.com", None, "/search", Some("q=test&limit=10")));
-            assert!(p.matches(
-                "https",
-                "api.com",
-                None,
-                "/search",
-                Some("q=anything&limit=100")
-            ));
-            assert!(!p.matches("https", "api.com", None, "/search", None));
-            assert!(!p.matches("https", "api.com", None, "/search", Some("q=test")));
+            t.assert_true(
+                "matching query",
+                p.matches("https", "api.com", None, "/search", Some("q=test&limit=10")),
+            );
+            t.assert_true(
+                "different values",
+                p.matches(
+                    "https",
+                    "api.com",
+                    None,
+                    "/search",
+                    Some("q=anything&limit=100"),
+                ),
+            );
+            t.assert_true(
+                "no query rejected",
+                !p.matches("https", "api.com", None, "/search", None),
+            );
+            t.assert_true(
+                "partial query rejected",
+                !p.matches("https", "api.com", None, "/search", Some("q=test")),
+            );
         }
 
         #[test]
         fn test_websocket_scheme() {
+            let t = test_report!("wss:// converted to https:// internally");
             let p = UrlPattern::new("wss://realtime.example.com/socket").unwrap();
-            // wss is converted to https internally
-            assert!(p.matches("https", "realtime.example.com", None, "/socket", None));
+            t.assert_true(
+                "wss matches https",
+                p.matches("https", "realtime.example.com", None, "/socket", None),
+            );
         }
 
         #[test]
         fn test_complex_path() {
+            let t = test_report!("Complex path with multiple wildcards");
             let p = UrlPattern::new("https://api.github.com/repos/*/commits/*").unwrap();
-            assert!(p.matches(
-                "https",
-                "api.github.com",
-                None,
-                "/repos/user/repo/commits/abc123",
-                None
-            ));
-            assert!(p.matches(
-                "https",
-                "api.github.com",
-                None,
-                "/repos/org/project/commits/main",
-                None
-            ));
+            t.assert_true(
+                "user/repo path",
+                p.matches(
+                    "https",
+                    "api.github.com",
+                    None,
+                    "/repos/user/repo/commits/abc123",
+                    None,
+                ),
+            );
+            t.assert_true(
+                "org/project path",
+                p.matches(
+                    "https",
+                    "api.github.com",
+                    None,
+                    "/repos/org/project/commits/main",
+                    None,
+                ),
+            );
         }
 
         #[test]
         fn test_any_method_any_path() {
+            let t = test_report!("Wildcard path matches everything under host");
             let p = UrlPattern::new("https://cdn.example.com/*").unwrap();
-            assert!(p.matches("https", "cdn.example.com", None, "/", None));
-            assert!(p.matches("https", "cdn.example.com", None, "/any/path/here.js", None));
+            t.assert_true(
+                "root",
+                p.matches("https", "cdn.example.com", None, "/", None),
+            );
+            t.assert_true(
+                "deep path",
+                p.matches("https", "cdn.example.com", None, "/any/path/here.js", None),
+            );
         }
 
         #[test]
         fn test_root_path() {
+            let t = test_report!("Root path / matching");
             let p = UrlPattern::new("https://example.com/").unwrap();
-            assert!(p.matches("https", "example.com", None, "/", None));
-            assert!(!p.matches("https", "example.com", None, "/other", None));
+            t.assert_true(
+                "root matches",
+                p.matches("https", "example.com", None, "/", None),
+            );
+            t.assert_true(
+                "other path rejected",
+                !p.matches("https", "example.com", None, "/other", None),
+            );
         }
 
         #[test]
         fn test_no_path() {
-            // URL without explicit path should default to /
+            let t = test_report!("URL without path defaults to /");
             let p = UrlPattern::new("https://example.com").unwrap();
-            assert!(p.matches("https", "example.com", None, "/", None));
+            t.assert_true(
+                "root matches",
+                p.matches("https", "example.com", None, "/", None),
+            );
         }
 
         #[test]
         fn test_invalid_pattern() {
-            assert!(UrlPattern::new("not-a-url").is_err());
-            assert!(UrlPattern::new("example.com/path").is_err());
+            let t = test_report!("Invalid URL patterns rejected");
+            t.assert_true("not-a-url", UrlPattern::new("not-a-url").is_err());
+            t.assert_true("no scheme", UrlPattern::new("example.com/path").is_err());
         }
     }
 }
