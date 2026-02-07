@@ -13,7 +13,7 @@ http-body-util = "0.1"
 bytes = "1"
 rustls = "0.23"
 tokio-rustls = "0.26"
-rcgen = "0.13"
+rcgen = { version = "0.13", features = ["x509-parser"] }
 time = "0.3"
 webpki-roots = "0.26"
 toml = "0.8"

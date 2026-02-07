@@ -34,6 +34,7 @@ pub struct TestCa {
 
 impl TestCa {
     pub fn generate() -> Self {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         let generated = GeneratedCa::generate().unwrap();
         let ca =
             CertificateAuthority::from_pem(&generated.cert_pem, &generated.key_pem).unwrap();
@@ -233,8 +234,6 @@ impl TestProxy {
         rules: Vec<redlimitador::config::Rule>,
         upstream_port: u16,
     ) -> Self {
-        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-
         let mut config = Config::minimal(
             "127.0.0.1:0".to_string(),
             ca.cert_path.clone(),
@@ -278,7 +277,7 @@ pub fn test_client(proxy_addr: SocketAddr, ca: &TestCa) -> reqwest::Client {
     let proxy_url = format!("http://{}", proxy_addr);
     let proxy = reqwest::Proxy::all(&proxy_url).unwrap();
 
-    let ca_cert = reqwest::tls::Certificate::from_der(&ca.cert_der).unwrap();
+    let ca_cert = reqwest::tls::Certificate::from_pem(ca.cert_pem.as_bytes()).unwrap();
 
     reqwest::Client::builder()
         .proxy(proxy)

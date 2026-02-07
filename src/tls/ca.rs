@@ -185,20 +185,9 @@ impl CertificateAuthority {
         let cert_key_pair =
             KeyPair::generate().map_err(|e| Error::certificate(e.to_string()))?;
 
-        // Create a signing CA certificate params to sign the new cert
-        // We need to create params that represent the CA for signing
-        let mut ca_params = CertificateParams::default();
-        ca_params
-            .distinguished_name
-            .push(DnType::CommonName, "Redlimitador Proxy CA");
-        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-        ca_params.key_usages = vec![
-            KeyUsagePurpose::KeyCertSign,
-            KeyUsagePurpose::CrlSign,
-            KeyUsagePurpose::DigitalSignature,
-        ];
-
-        // Create a self-signed CA cert just for signing (uses stored key)
+        // Reconstruct the CA cert from its DER for signing
+        let ca_params = CertificateParams::from_ca_cert_der(&self.cert_der)
+            .map_err(|e| Error::certificate(format!("Failed to parse CA cert: {}", e)))?;
         let ca_cert = ca_params
             .self_signed(&self.key_pair)
             .map_err(|e| Error::certificate(format!("Failed to create CA for signing: {}", e)))?;
