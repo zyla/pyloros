@@ -31,8 +31,6 @@ cargo run -- validate-config --config config.toml        # Validate config
 
 `devdocs/SPEC.md` is a declarative specification of what we want this product to be: features, technical choices (libraries, protocols, testing strategy), and configuration format. Code should ultimately be maintained to match the requirements here. When we want to change something in the product, we first modify the SPEC.
 
-IMPORTANT: Maintain progress in devdocs/TASKS.md.
-
 After context compaction (when conversation history is summarized), reread `devdocs/SPEC.md` and any other relevant spec documents to stay on track with requirements and guidelines.
 
 When facing design decisions, do the simpler thing but save it in devdocs/QUESTIONS.md for further consideration.
@@ -67,7 +65,7 @@ git worktree add ../redlimitador-worktrees/<feature-slug> claude/<feature-slug>
 
 **Location**: worktrees live in `../redlimitador-worktrees/<slug>/` (a sibling directory, not a subdirectory) so Grep/Glob don't find duplicate files.
 
-**During development**: use absolute paths for all commands since shell state resets between Bash calls. Follow the same dev process (tests, commits, TASKS.md updates).
+**During development**: use absolute paths for all commands since shell state resets between Bash calls. Follow the same dev process (tests, commits).
 
 **Finishing**: default to `gh pr create`. For trivial changes where a PR would be overkill, merge locally. Ask the user if unclear.
 
