@@ -114,8 +114,7 @@ impl ProxyHandler {
         let request_info = RequestInfo::http(&method, scheme, &host, port, path, query);
         let full_url = request_info.full_url();
 
-        // Check filter (AllowedWithBranchCheck treated as Allowed for plain HTTP —
-        // branch inspection only applies to HTTPS CONNECT tunnels)
+        // Check filter
         match self.filter_engine.check(&request_info) {
             FilterResult::Blocked => {
                 if self.log_blocked_requests {
@@ -127,7 +126,20 @@ impl ProxyHandler {
                 }
                 return Ok(blocked_response(&method, &full_url));
             }
-            FilterResult::Allowed | FilterResult::AllowedWithBranchCheck(_) => {
+            FilterResult::AllowedWithBranchCheck(_) => {
+                // Git rules with branch restrictions require body inspection,
+                // which is only supported over HTTPS CONNECT tunnels. Block
+                // plain HTTP to maintain default-deny.
+                if self.log_blocked_requests {
+                    tracing::warn!(
+                        method = %method,
+                        url = %full_url,
+                        "BLOCKED (HTTP: branch check requires HTTPS)"
+                    );
+                }
+                return Ok(blocked_response(&method, &full_url));
+            }
+            FilterResult::Allowed => {
                 if self.log_allowed_requests {
                     tracing::info!(
                         method = %method,
