@@ -245,3 +245,98 @@ async fn test_git_clone_through_proxy() {
     proxy.shutdown();
     upstream.shutdown();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_git_push_through_proxy() {
+    let backend_path = git_http_backend_path();
+
+    let t = test_report!("Git push through HTTPS proxy");
+    let ca = TestCa::generate();
+    t.setup("Generated test CA");
+
+    let tmp = TempDir::new().unwrap();
+    let repos_dir = create_test_repo(tmp.path());
+    t.setup(format!("Created test git repo at {:?}", repos_dir));
+
+    // Enable receive-pack on the bare repo so pushes are accepted
+    let bare_repo = repos_dir.join("repo.git");
+    let run_git = |args: &[&str], cwd: &Path| {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    run_git(&["config", "http.receivepack", "true"], &bare_repo);
+    t.setup("Enabled http.receivepack on bare repo");
+
+    let upstream = TestUpstream::start_reported(
+        &t,
+        &ca,
+        git_cgi_handler(backend_path, repos_dir),
+        "git http-backend CGI",
+    )
+    .await;
+
+    let proxy = TestProxy::start_reported(
+        &t,
+        &ca,
+        vec![rule("*", "https://localhost/*")],
+        upstream.port(),
+    )
+    .await;
+
+    let proxy_url = format!("http://127.0.0.1:{}", proxy.addr().port());
+
+    // Step 1: Clone through proxy
+    let clone_dir = tmp.path().join("cloned");
+    let output = run_command_reported(
+        &t,
+        std::process::Command::new("git")
+            .args([
+                "clone",
+                "https://localhost/repo.git",
+                clone_dir.to_str().unwrap(),
+            ])
+            .env("HTTPS_PROXY", &proxy_url)
+            .env("GIT_SSL_CAINFO", &ca.cert_path)
+            .env("GIT_TERMINAL_PROMPT", "0"),
+    );
+    t.assert_eq("git clone exit code", &output.status.code().unwrap(), &0);
+
+    // Step 2: Make a new commit in the cloned repo
+    std::fs::write(clone_dir.join("newfile.txt"), "pushed content\n").unwrap();
+    run_git(&["add", "newfile.txt"], &clone_dir);
+    run_git(&["commit", "-m", "Add newfile"], &clone_dir);
+    t.action("Created new commit with newfile.txt");
+
+    // Step 3: Push through proxy
+    let output = run_command_reported(
+        &t,
+        std::process::Command::new("git")
+            .args(["push"])
+            .current_dir(&clone_dir)
+            .env("HTTPS_PROXY", &proxy_url)
+            .env("GIT_SSL_CAINFO", &ca.cert_path)
+            .env("GIT_TERMINAL_PROMPT", "0"),
+    );
+    t.assert_eq("git push exit code", &output.status.code().unwrap(), &0);
+
+    // Step 4: Verify the bare repo received the push
+    let verify = std::process::Command::new("git")
+        .args(["show", "HEAD:newfile.txt"])
+        .current_dir(&bare_repo)
+        .output()
+        .unwrap();
+    let content = String::from_utf8_lossy(&verify.stdout);
+    t.assert_contains("bare repo has pushed file", &content, "pushed content");
+
+    proxy.shutdown();
+    upstream.shutdown();
+}
