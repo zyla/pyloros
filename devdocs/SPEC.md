@@ -105,10 +105,17 @@ websocket = true
 - Binary-level smoke tests that spawn the real binary and drive it with `curl`
 - Live API tests against production servers (skipped when credentials unavailable)
 - CLI integration tests for all subcommands (`run`, `generate-ca`, `validate-config`)
-- Structured test report generation (Markdown + HTML)
 - Tests run in GitHub Actions; coverage is reported
 
-See `DECISIONS.md` for implementation details (test architecture, port override mechanism, report design).
+See `DECISIONS.md` for implementation details (test architecture, port override mechanism).
+
+### Test Report Generation
+
+Tests produce a human-readable report showing, for each test: what was done, what the result was, and what assertions were checked. The report is tightly coupled to actual test execution — descriptions are derived from real parameters (URLs, rules, CLI args), making drift between tests and report impossible.
+
+- A standalone report generator tool (`tools/test-report/`) runs the test suite and produces Markdown + HTML output.
+- The Markdown report is published to the GitHub Actions job summary so it's visible directly in the run without downloading artifacts.
+- Reports are also uploaded as CI artifacts.
 
 ## Documentation
 

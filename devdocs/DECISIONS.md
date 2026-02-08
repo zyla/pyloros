@@ -43,15 +43,3 @@ production servers. These tests require the `claude` CLI to be installed and
 authenticated (OAuth credentials at `~/.claude/.credentials.json`) and are skipped
 when either is unavailable (e.g. in CI).
 
-## Test Report Generation
-
-Tests produce a human-readable report showing, for each test: what was done, what the
-result was, and what assertions were checked. The report is tightly coupled to actual
-test execution — descriptions are derived from real parameters (URLs, rules, CLI
-args), making drift between tests and report impossible.
-
-- A standalone report generator tool (`tools/test-report/`) runs the test suite and
-  produces Markdown + HTML output.
-- The Markdown report is published to the GitHub Actions job summary so it's visible
-  directly in the run without downloading artifacts.
-- Reports are also uploaded as CI artifacts.
