@@ -1,5 +1,7 @@
 # Pyloros
 
+*From Greek πυλωρός (pyloros) — πύλη (gate) + οὖρος (guard). A gatekeeper.*
+
 A default-deny allowlist-based HTTPS filtering proxy for controlling AI agent network access.
 
 ## Overview
