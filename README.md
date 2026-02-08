@@ -235,4 +235,4 @@ cargo llvm-cov --html         # HTML report in coverage/
 
 ## License
 
-MIT
+[MIT](./LICENSE)
