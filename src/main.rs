@@ -254,6 +254,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let engine = redlimitador::FilterEngine::new(cfg.rules)?;
             println!();
             println!("All {} rules compiled successfully.", engine.rule_count());
+
+            // Validate and display credentials
+            println!("  Credentials: {}", cfg.credentials.len());
+            if !cfg.credentials.is_empty() {
+                println!();
+                println!("Credentials:");
+                for (i, cred) in cfg.credentials.iter().enumerate() {
+                    println!("  {}. header={} url={}", i + 1, cred.header, cred.url);
+                }
+                let cred_engine = redlimitador::CredentialEngine::new(cfg.credentials)?;
+                println!();
+                println!(
+                    "All {} credentials compiled successfully.",
+                    cred_engine.credential_count()
+                );
+            }
         }
     }
 
