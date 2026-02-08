@@ -1,6 +1,6 @@
 mod common;
 
-use common::{rule, test_client, TestCa, TestProxy};
+use common::{rule, ReportingClient, TestCa, TestProxy};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use wiremock::{matchers::any, Mock, MockServer, ResponseTemplate};
 
@@ -11,28 +11,27 @@ use wiremock::{matchers::any, Mock, MockServer, ResponseTemplate};
 /// Allowed plain HTTP GET reaches upstream and returns 200 + body.
 #[tokio::test]
 async fn test_http_allowed_get_returns_200() {
+    let t = test_report!("Plain HTTP allowed GET returns 200");
+
     let ca = TestCa::generate();
     let upstream = MockServer::start().await;
+    t.setup("MockServer returning 200 'hello plain http'");
     Mock::given(any())
         .respond_with(ResponseTemplate::new(200).set_body_string("hello plain http"))
         .mount(&upstream)
         .await;
 
     let port = upstream.address().port();
-    let proxy = TestProxy::start(
-        &ca,
-        vec![rule("GET", "http://localhost/*")],
-        port, // unused for plain HTTP, but required by TestProxy
-    )
-    .await;
+    let proxy =
+        TestProxy::start_reported(&t, &ca, vec![rule("GET", "http://localhost/*")], port).await;
 
-    let client = test_client(proxy.addr(), &ca);
+    let client = ReportingClient::new_plain(&t, proxy.addr());
     let url = format!("http://localhost:{}/test", port);
-    let resp = client.get(&url).send().await.unwrap();
+    let resp = client.get(&url).await;
 
-    assert_eq!(resp.status(), 200);
+    t.assert_eq("Response status", &resp.status().as_u16(), &200u16);
     let body = resp.text().await.unwrap();
-    assert_eq!(body, "hello plain http");
+    t.assert_eq("Response body", &body.as_str(), &"hello plain http");
 
     proxy.shutdown();
 }
@@ -40,8 +39,11 @@ async fn test_http_allowed_get_returns_200() {
 /// Blocked plain HTTP request returns 451.
 #[tokio::test]
 async fn test_http_blocked_request_returns_451() {
+    let t = test_report!("Plain HTTP blocked request returns 451");
+
     let ca = TestCa::generate();
     let upstream = MockServer::start().await;
+    t.setup("MockServer returning 200 (should not reach)");
     Mock::given(any())
         .respond_with(ResponseTemplate::new(200).set_body_string("should not reach"))
         .mount(&upstream)
@@ -49,20 +51,23 @@ async fn test_http_blocked_request_returns_451() {
 
     let port = upstream.address().port();
     // Rule only allows example.com, not localhost
-    let proxy = TestProxy::start(&ca, vec![rule("GET", "http://example.com/*")], port).await;
+    let proxy =
+        TestProxy::start_reported(&t, &ca, vec![rule("GET", "http://example.com/*")], port).await;
 
-    let client = test_client(proxy.addr(), &ca);
+    let client = ReportingClient::new_plain(&t, proxy.addr());
     let url = format!("http://localhost:{}/blocked", port);
-    let resp = client.get(&url).send().await.unwrap();
+    let resp = client.get(&url).await;
 
-    assert_eq!(resp.status(), 451);
-    assert_eq!(
-        resp.headers()
+    t.assert_eq("Response status", &resp.status().as_u16(), &451u16);
+    t.assert_eq(
+        "X-Blocked-By header",
+        &resp
+            .headers()
             .get("X-Blocked-By")
             .unwrap()
             .to_str()
             .unwrap(),
-        "redlimitador"
+        &"redlimitador",
     );
 
     proxy.shutdown();
@@ -71,44 +76,51 @@ async fn test_http_blocked_request_returns_451() {
 /// Plain HTTP forwarding strips hop-by-hop headers and forwards custom headers.
 #[tokio::test]
 async fn test_http_headers_forwarded() {
+    let t = test_report!("Plain HTTP headers forwarded correctly");
+
     let ca = TestCa::generate();
     let upstream = MockServer::start().await;
+    t.setup("MockServer returning 200");
     Mock::given(any())
         .respond_with(ResponseTemplate::new(200))
         .mount(&upstream)
         .await;
 
     let port = upstream.address().port();
-    let proxy = TestProxy::start(&ca, vec![rule("GET", "http://localhost/*")], port).await;
+    let proxy =
+        TestProxy::start_reported(&t, &ca, vec![rule("GET", "http://localhost/*")], port).await;
 
-    let client = test_client(proxy.addr(), &ca);
+    let client = ReportingClient::new_plain(&t, proxy.addr());
     let url = format!("http://localhost:{}/headers", port);
     let resp = client
-        .get(&url)
-        .header("X-Custom-Header", "test-value")
-        .header("Proxy-Connection", "keep-alive") // hop-by-hop, should be stripped
-        .send()
-        .await
-        .unwrap();
+        .get_with_headers(
+            &url,
+            &[
+                ("X-Custom-Header", "test-value"),
+                ("Proxy-Connection", "keep-alive"),
+            ],
+        )
+        .await;
 
-    assert_eq!(resp.status(), 200);
+    t.assert_eq("Response status", &resp.status().as_u16(), &200u16);
 
     // Inspect what the upstream actually received
     let received = upstream.received_requests().await.unwrap();
-    assert_eq!(received.len(), 1);
+    t.assert_eq("Request count", &received.len(), &1usize);
     let req = &received[0];
 
-    assert_eq!(
-        req.headers
+    t.assert_eq(
+        "Custom header forwarded",
+        &req.headers
             .get("x-custom-header")
             .unwrap()
             .to_str()
             .unwrap(),
-        "test-value",
+        &"test-value",
     );
-    assert!(
+    t.assert_true(
+        "Hop-by-hop Proxy-Connection stripped",
         req.headers.get("proxy-connection").is_none(),
-        "Hop-by-hop header proxy-connection should be stripped"
     );
 
     proxy.shutdown();
@@ -117,19 +129,24 @@ async fn test_http_headers_forwarded() {
 /// Plain HTTP upstream unreachable returns 502 Bad Gateway.
 #[tokio::test]
 async fn test_http_upstream_down_returns_502() {
+    let t = test_report!("Plain HTTP upstream down returns 502");
+
     let ca = TestCa::generate();
     // Bind a port then drop the listener so nothing is listening
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let dead_port = listener.local_addr().unwrap().port();
     drop(listener);
 
-    let proxy = TestProxy::start(&ca, vec![rule("GET", "http://localhost/*")], dead_port).await;
+    t.setup("Upstream: dead port (nothing listening)");
+    let proxy =
+        TestProxy::start_reported(&t, &ca, vec![rule("GET", "http://localhost/*")], dead_port)
+            .await;
 
-    let client = test_client(proxy.addr(), &ca);
+    let client = ReportingClient::new_plain(&t, proxy.addr());
     let url = format!("http://localhost:{}/gone", dead_port);
-    let resp = client.get(&url).send().await.unwrap();
+    let resp = client.get(&url).await;
 
-    assert_eq!(resp.status(), 502);
+    t.assert_eq("Response status", &resp.status().as_u16(), &502u16);
 
     proxy.shutdown();
 }
@@ -137,34 +154,41 @@ async fn test_http_upstream_down_returns_502() {
 /// Plain HTTP POST with body is forwarded to upstream.
 #[tokio::test]
 async fn test_http_post_with_body() {
+    let t = test_report!("Plain HTTP POST with body forwarded");
+
     let ca = TestCa::generate();
     let upstream = MockServer::start().await;
+    t.setup("MockServer returning 200 'post ok'");
     Mock::given(any())
         .respond_with(ResponseTemplate::new(200).set_body_string("post ok"))
         .mount(&upstream)
         .await;
 
     let port = upstream.address().port();
-    let proxy = TestProxy::start(&ca, vec![rule("POST", "http://localhost/*")], port).await;
+    let proxy =
+        TestProxy::start_reported(&t, &ca, vec![rule("POST", "http://localhost/*")], port).await;
 
-    let client = test_client(proxy.addr(), &ca);
+    let client = ReportingClient::new_plain(&t, proxy.addr());
     let url = format!("http://localhost:{}/submit", port);
-    let resp = client
-        .post(&url)
-        .body("hello from client")
-        .send()
-        .await
-        .unwrap();
+    let resp = client.post_with_body(&url, "hello from client").await;
 
-    assert_eq!(resp.status(), 200);
-    assert_eq!(resp.text().await.unwrap(), "post ok");
+    t.assert_eq("Response status", &resp.status().as_u16(), &200u16);
+    t.assert_eq(
+        "Response body",
+        &resp.text().await.unwrap().as_str(),
+        &"post ok",
+    );
 
     // Verify upstream received the POST with correct method and body
     let received = upstream.received_requests().await.unwrap();
-    assert_eq!(received.len(), 1);
+    t.assert_eq("Request count", &received.len(), &1usize);
     let req = &received[0];
-    assert_eq!(req.method.as_str(), "POST");
-    assert_eq!(req.body, b"hello from client");
+    t.assert_eq("Method is POST", &req.method.as_str(), &"POST");
+    t.assert_eq(
+        "Body forwarded",
+        &req.body.as_slice(),
+        &b"hello from client".as_slice(),
+    );
 
     proxy.shutdown();
 }

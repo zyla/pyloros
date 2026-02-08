@@ -246,9 +246,42 @@ impl<'a> ReportingClient<'a> {
         self.inner.get(url).send().await.unwrap()
     }
 
+    pub fn new_plain(report: &'a TestReport, proxy_addr: SocketAddr) -> Self {
+        let proxy_url = format!("http://{}", proxy_addr);
+        let proxy = reqwest::Proxy::all(&proxy_url).unwrap();
+        let client = reqwest::Client::builder().proxy(proxy).build().unwrap();
+        Self {
+            inner: client,
+            report,
+        }
+    }
+
     pub async fn post(&self, url: &str) -> reqwest::Response {
         self.report.action(format!("POST {}", url));
         self.inner.post(url).send().await.unwrap()
+    }
+
+    pub async fn post_with_body(
+        &self,
+        url: &str,
+        body: impl Into<reqwest::Body>,
+    ) -> reqwest::Response {
+        self.report.action(format!("POST {} (with body)", url));
+        self.inner.post(url).body(body).send().await.unwrap()
+    }
+
+    pub async fn get_with_headers(&self, url: &str, headers: &[(&str, &str)]) -> reqwest::Response {
+        let header_desc = headers
+            .iter()
+            .map(|(k, v)| format!("{}:{}", k, v))
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.report.action(format!("GET {} [{}]", url, header_desc));
+        let mut req = self.inner.get(url);
+        for (k, v) in headers {
+            req = req.header(*k, *v);
+        }
+        req.send().await.unwrap()
     }
 
     pub async fn request(&self, method: reqwest::Method, url: &str) -> reqwest::Response {

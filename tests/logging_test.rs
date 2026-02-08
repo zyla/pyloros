@@ -1,6 +1,6 @@
 mod common;
 
-use common::{ok_handler, rule, test_client, LogCapture, TestCa, TestUpstream};
+use common::{ok_handler, rule, LogCapture, ReportingClient, TestCa, TestUpstream};
 use redlimitador::{Config, ProxyServer};
 
 // ---------------------------------------------------------------------------
@@ -40,20 +40,14 @@ async fn test_log_blocked_only() {
         let _ = server.serve(shutdown_rx).await;
     });
 
-    let client = test_client(addr, &ca);
+    let client = ReportingClient::new(&t, addr, &ca);
 
     // Allowed request — should NOT produce an ALLOWED log line
-    t.action("GET https://localhost/ok (allowed)");
-    let resp = client.get("https://localhost/ok").send().await.unwrap();
+    let resp = client.get("https://localhost/ok").await;
     t.assert_eq("Allowed response status", &resp.status().as_u16(), &200u16);
 
     // Blocked request — should produce a BLOCKED log line
-    t.action("POST https://localhost/blocked (blocked)");
-    let resp = client
-        .post("https://localhost/blocked")
-        .send()
-        .await
-        .unwrap();
+    let resp = client.post("https://localhost/blocked").await;
     t.assert_eq("Blocked response status", &resp.status().as_u16(), &451u16);
 
     // Give spawned tasks a moment to flush log output
@@ -99,20 +93,14 @@ async fn test_log_allowed_only() {
         let _ = server.serve(shutdown_rx).await;
     });
 
-    let client = test_client(addr, &ca);
+    let client = ReportingClient::new(&t, addr, &ca);
 
     // Allowed request — should produce an ALLOWED log line
-    t.action("GET https://localhost/ok (allowed)");
-    let resp = client.get("https://localhost/ok").send().await.unwrap();
+    let resp = client.get("https://localhost/ok").await;
     t.assert_eq("Allowed response status", &resp.status().as_u16(), &200u16);
 
     // Blocked request — should NOT produce a BLOCKED log line
-    t.action("POST https://localhost/blocked (blocked)");
-    let resp = client
-        .post("https://localhost/blocked")
-        .send()
-        .await
-        .unwrap();
+    let resp = client.post("https://localhost/blocked").await;
     t.assert_eq("Blocked response status", &resp.status().as_u16(), &451u16);
 
     // Give spawned tasks a moment to flush log output
