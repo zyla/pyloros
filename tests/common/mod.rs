@@ -69,6 +69,7 @@ pub struct TestReport {
     report_dir: Option<PathBuf>,
     source_file: String,
     source_line: u32,
+    skipped: Mutex<Option<String>>,
 }
 
 impl TestReport {
@@ -81,7 +82,13 @@ impl TestReport {
             report_dir,
             source_file: source_file.to_string(),
             source_line,
+            skipped: Mutex::new(None),
         }
+    }
+
+    /// Mark this test as skipped with a reason. Call before returning early.
+    pub fn skip(&self, reason: impl Display) {
+        *self.skipped.lock().unwrap() = Some(reason.to_string());
     }
 
     /// Format a Debug-formatted value for report display.
@@ -212,8 +219,14 @@ impl TestReport {
             return;
         };
 
-        let panicking = std::thread::panicking();
-        let result = if panicking { "fail" } else { "pass" };
+        let skip_reason = self.skipped.lock().unwrap().clone();
+        let result = if let Some(reason) = &skip_reason {
+            format!("skip: {}", reason)
+        } else if std::thread::panicking() {
+            "fail".to_string()
+        } else {
+            "pass".to_string()
+        };
 
         let steps = self.steps.lock().unwrap();
         let mut lines = Vec::new();

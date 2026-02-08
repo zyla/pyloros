@@ -43,8 +43,8 @@ fn main() -> ExitCode {
     let source_base_url = detect_github_source_base();
 
     // Generate markdown
-    let (total_pass, total_fail) = count_results(&grouped);
-    let markdown = generate_markdown(&grouped, total_pass, total_fail, &source_base_url);
+    let (total_pass, total_fail, total_skip) = count_results(&grouped);
+    let markdown = generate_markdown(&grouped, total_pass, total_fail, total_skip, &source_base_url);
 
     // Write markdown
     std::fs::write("test-report.md", &markdown).expect("failed to write test-report.md");
@@ -191,6 +191,20 @@ impl TestEntry {
             TestEntry::Unreported { passed, .. } => *passed,
         }
     }
+
+    fn skipped(&self) -> bool {
+        match self {
+            TestEntry::Reported(r) => r.result.starts_with("skip"),
+            TestEntry::Unreported { .. } => false,
+        }
+    }
+
+    fn skip_reason(&self) -> Option<&str> {
+        match self {
+            TestEntry::Reported(r) => r.result.strip_prefix("skip: "),
+            TestEntry::Unreported { .. } => None,
+        }
+    }
 }
 
 fn merge_results(
@@ -250,19 +264,22 @@ fn merge_results(
 // Count results
 // ---------------------------------------------------------------------------
 
-fn count_results(grouped: &BTreeMap<String, Vec<TestEntry>>) -> (usize, usize) {
+fn count_results(grouped: &BTreeMap<String, Vec<TestEntry>>) -> (usize, usize, usize) {
     let mut pass = 0;
     let mut fail = 0;
+    let mut skip = 0;
     for entries in grouped.values() {
         for entry in entries {
-            if entry.passed() {
+            if entry.skipped() {
+                skip += 1;
+            } else if entry.passed() {
                 pass += 1;
             } else {
                 fail += 1;
             }
         }
     }
-    (pass, fail)
+    (pass, fail, skip)
 }
 
 // ---------------------------------------------------------------------------
@@ -356,6 +373,7 @@ fn generate_markdown(
     grouped: &BTreeMap<String, Vec<TestEntry>>,
     total_pass: usize,
     total_fail: usize,
+    total_skip: usize,
     source_base_url: &Option<String>,
 ) -> String {
     let mut md = String::new();
@@ -363,32 +381,40 @@ fn generate_markdown(
 
     md.push_str("# Test Report\n\n");
 
-    if total_fail == 0 {
-        md.push_str(&format!(
-            "Generated: {} | **{} passed**, 0 failed\n\n",
-            now, total_pass
-        ));
+    let mut summary = format!("Generated: {} | **{} passed**", now, total_pass);
+    if total_fail > 0 {
+        summary.push_str(&format!(", **{} failed**", total_fail));
     } else {
-        md.push_str(&format!(
-            "Generated: {} | **{} passed**, **{} failed**\n\n",
-            now, total_pass, total_fail
-        ));
+        summary.push_str(", 0 failed");
     }
+    if total_skip > 0 {
+        summary.push_str(&format!(", {} skipped", total_skip));
+    }
+    summary.push_str("\n\n");
+    md.push_str(&summary);
 
     for (group, entries) in grouped {
         let group_pass = entries.iter().filter(|e| e.passed()).count();
+        let group_skip = entries.iter().filter(|e| e.skipped()).count();
         let group_total = entries.len();
         let display = group_display_name(group);
 
-        md.push_str(&format!(
-            "## {} ({}) \u{2014} {} tests, {} passed\n\n",
+        let mut group_summary = format!(
+            "## {} ({}) \u{2014} {} tests, {} passed",
             display, group, group_total, group_pass
-        ));
+        );
+        if group_skip > 0 {
+            group_summary.push_str(&format!(", {} skipped", group_skip));
+        }
+        group_summary.push_str("\n\n");
+        md.push_str(&group_summary);
 
         for entry in entries {
             match entry {
                 TestEntry::Reported(report) => {
-                    let icon = if report.result == "pass" {
+                    let icon = if entry.skipped() {
+                        "\u{23ed}\u{fe0f}"
+                    } else if report.result == "pass" {
                         "\u{2705}"
                     } else {
                         "\u{274c}"
@@ -414,6 +440,11 @@ fn generate_markdown(
                             md.push_str(&format!("{}\n", link));
                         }
                         _ => {}
+                    }
+
+                    // Show skip reason if skipped
+                    if let Some(reason) = entry.skip_reason() {
+                        md.push_str(&format!("*Skipped: {}*\n", reason));
                     }
 
                     for step in &report.steps {
