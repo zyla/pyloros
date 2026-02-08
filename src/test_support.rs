@@ -22,7 +22,7 @@ macro_rules! test_report {
         let name = &name[..name.len() - 3];
         // In async fns, the path ends with "::{{closure}}" — strip that too
         let name = name.strip_suffix("::{{closure}}").unwrap_or(name);
-        $crate::test_support::TestReport::new(name, $title)
+        $crate::test_support::TestReport::new(name, $title, file!(), line!())
     }};
 }
 
@@ -49,16 +49,30 @@ pub struct TestReport {
     title: String,
     steps: Mutex<Vec<Step>>,
     report_dir: Option<PathBuf>,
+    source_file: String,
+    source_line: u32,
 }
 
 impl TestReport {
-    pub fn new(full_path: &str, title: &str) -> Self {
+    pub fn new(full_path: &str, title: &str, source_file: &str, source_line: u32) -> Self {
         let report_dir = std::env::var("TEST_REPORT_DIR").ok().map(PathBuf::from);
         Self {
             full_path: full_path.to_string(),
             title: title.to_string(),
             steps: Mutex::new(Vec::new()),
             report_dir,
+            source_file: source_file.to_string(),
+            source_line,
+        }
+    }
+
+    /// Format a Debug-formatted value for report display.
+    /// Wraps in backticks. Truncates at `max_len` chars to prevent huge report files.
+    fn truncate_for_display(debug_str: &str, max_len: usize) -> String {
+        if debug_str.len() <= max_len {
+            format!("`{}`", debug_str)
+        } else {
+            format!("`{}…` ({} bytes)", &debug_str[..max_len], debug_str.len())
         }
     }
 
@@ -84,7 +98,9 @@ impl TestReport {
         E: Debug,
     {
         let pass = actual == expected;
-        let msg = format!("{}: {:?} == {:?}", label, actual, expected);
+        let actual_s = Self::truncate_for_display(&format!("{:?}", actual), 1000);
+        let expected_s = Self::truncate_for_display(&format!("{:?}", expected), 1000);
+        let msg = format!("{}: {} == {}", label, actual_s, expected_s);
         self.steps.lock().unwrap().push(if pass {
             Step::AssertPass(msg)
         } else {
@@ -96,7 +112,9 @@ impl TestReport {
     #[allow(dead_code)]
     pub fn assert_contains(&self, label: &str, haystack: &str, needle: &str) {
         let pass = haystack.contains(needle);
-        let msg = format!("{}: {:?} contains {:?}", label, haystack, needle);
+        let haystack_s = Self::truncate_for_display(&format!("{:?}", haystack), 1000);
+        let needle_s = Self::truncate_for_display(&format!("{:?}", needle), 1000);
+        let msg = format!("{}: {} contains {}", label, haystack_s, needle_s);
         self.steps.lock().unwrap().push(if pass {
             Step::AssertPass(msg)
         } else {
@@ -110,7 +128,7 @@ impl TestReport {
     }
 
     pub fn assert_true(&self, label: &str, value: bool) {
-        let msg = format!("{}: {}", label, value);
+        let msg = format!("{}: `{}`", label, value);
         self.steps.lock().unwrap().push(if value {
             Step::AssertPass(msg)
         } else {
@@ -150,6 +168,7 @@ impl TestReport {
         lines.push(format!("GROUP: {}", self.group()));
         lines.push(format!("NAME: {}", self.name()));
         lines.push(format!("TITLE: {}", self.title));
+        lines.push(format!("SOURCE: {}:{}", self.source_file, self.source_line));
         for step in steps.iter() {
             lines.push(step.to_report_line());
         }

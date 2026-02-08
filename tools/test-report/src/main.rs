@@ -39,9 +39,12 @@ fn main() -> ExitCode {
     // Merge: report files take precedence, cargo results fill gaps
     let grouped = merge_results(&report_files, &cargo_results);
 
+    // Detect GitHub source link base URL
+    let source_base_url = detect_github_source_base();
+
     // Generate markdown
     let (total_pass, total_fail) = count_results(&grouped);
-    let markdown = generate_markdown(&grouped, total_pass, total_fail);
+    let markdown = generate_markdown(&grouped, total_pass, total_fail, &source_base_url);
 
     // Write markdown
     std::fs::write("test-report.md", &markdown).expect("failed to write test-report.md");
@@ -100,6 +103,7 @@ struct TestReportFile {
     group: String,
     name: String,
     title: String,
+    source: Option<String>,
     steps: Vec<String>,
     result: String,
 }
@@ -129,6 +133,7 @@ fn parse_report_file(path: &Path) -> Option<TestReportFile> {
     let mut group = String::new();
     let mut name = String::new();
     let mut title = String::new();
+    let mut source = None;
     let mut steps = Vec::new();
     let mut result = String::new();
 
@@ -139,6 +144,8 @@ fn parse_report_file(path: &Path) -> Option<TestReportFile> {
             name = val.to_string();
         } else if let Some(val) = line.strip_prefix("TITLE: ") {
             title = val.to_string();
+        } else if let Some(val) = line.strip_prefix("SOURCE: ") {
+            source = Some(val.to_string());
         } else if let Some(val) = line.strip_prefix("STEP ") {
             steps.push(val.to_string());
         } else if let Some(val) = line.strip_prefix("RESULT: ") {
@@ -154,6 +161,7 @@ fn parse_report_file(path: &Path) -> Option<TestReportFile> {
         group,
         name,
         title,
+        source,
         steps,
         result,
     })
@@ -278,10 +286,77 @@ fn group_display_name(group: &str) -> String {
         .join(" ")
 }
 
+/// Detect GitHub repo URL and current commit to build source links.
+/// Returns a base like "https://github.com/user/repo/blob/abc123" or None.
+fn detect_github_source_base() -> Option<String> {
+    let remote = Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .output()
+        .ok()?;
+    if !remote.status.success() {
+        return None;
+    }
+    let url = String::from_utf8_lossy(&remote.stdout).trim().to_string();
+
+    // Convert git@github.com:user/repo.git or https://github.com/user/repo.git to https://github.com/user/repo
+    let repo_url = if let Some(rest) = url.strip_prefix("git@github.com:") {
+        format!(
+            "https://github.com/{}",
+            rest.trim_end_matches(".git")
+        )
+    } else if url.starts_with("https://github.com/") {
+        url.trim_end_matches(".git").to_string()
+    } else {
+        return None;
+    };
+
+    let commit = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()?;
+    if !commit.status.success() {
+        return None;
+    }
+    let sha = String::from_utf8_lossy(&commit.stdout).trim().to_string();
+
+    Some(format!("{}/blob/{}", repo_url, sha))
+}
+
+/// Extract the label from an assertion message (text before the first `: `).
+fn extract_label(msg: &str) -> &str {
+    msg.split_once(": ").map(|(label, _)| label).unwrap_or(msg)
+}
+
+/// Render a step line, using a collapsible `<details>` block for long lines.
+fn render_step(md: &mut String, prefix: &str, icon: &str, msg: &str) {
+    let line = if icon.is_empty() {
+        format!("- {}{}", prefix, msg)
+    } else {
+        format!("- {} {}", icon, msg)
+    };
+
+    if line.len() < 150 {
+        md.push_str(&line);
+        md.push('\n');
+    } else {
+        let label = extract_label(msg);
+        let summary_text = if icon.is_empty() {
+            format!("{}{}", prefix, label)
+        } else {
+            format!("{} {}", icon, label)
+        };
+        md.push_str(&format!(
+            "<details>\n<summary>{}</summary>\n\n{}\n\n</details>\n",
+            summary_text, msg
+        ));
+    }
+}
+
 fn generate_markdown(
     grouped: &BTreeMap<String, Vec<TestEntry>>,
     total_pass: usize,
     total_fail: usize,
+    source_base_url: &Option<String>,
 ) -> String {
     let mut md = String::new();
     let now = chrono_like_now();
@@ -319,19 +394,37 @@ fn generate_markdown(
                         "\u{274c}"
                     };
                     md.push_str(&format!("### {} {}\n", icon, report.name));
-                    if !report.title.is_empty() {
-                        md.push_str(&format!("**{}**\n", report.title));
+
+                    // Title + source link
+                    let source_link = report.source.as_ref().and_then(|s| {
+                        let base = source_base_url.as_ref()?;
+                        // source is "file:line" e.g. "tests/proxy_basic_test.rs:12"
+                        let (file, line) = s.split_once(':')?;
+                        Some(format!("[source]({}/{}#L{})", base, file, line))
+                    });
+
+                    match (&report.title, &source_link) {
+                        (title, Some(link)) if !title.is_empty() => {
+                            md.push_str(&format!("**{}** \u{00b7} {}\n", title, link));
+                        }
+                        (title, None) if !title.is_empty() => {
+                            md.push_str(&format!("**{}**\n", title));
+                        }
+                        (_, Some(link)) => {
+                            md.push_str(&format!("{}\n", link));
+                        }
+                        _ => {}
                     }
 
                     for step in &report.steps {
                         if let Some(msg) = step.strip_prefix("setup: ") {
-                            md.push_str(&format!("- Setup: {}\n", msg));
+                            render_step(&mut md, "Setup: ", "", msg);
                         } else if let Some(msg) = step.strip_prefix("action: ") {
-                            md.push_str(&format!("- Action: {}\n", msg));
+                            render_step(&mut md, "Action: ", "", msg);
                         } else if let Some(msg) = step.strip_prefix("assert_pass: ") {
-                            md.push_str(&format!("- \u{2705} {}\n", msg));
+                            render_step(&mut md, "", "\u{2705}", msg);
                         } else if let Some(msg) = step.strip_prefix("assert_fail: ") {
-                            md.push_str(&format!("- \u{274c} {}\n", msg));
+                            render_step(&mut md, "", "\u{274c}", msg);
                         }
                     }
                     md.push('\n');
@@ -421,6 +514,28 @@ fn render_html(markdown: &str) -> String {
     padding: 0.1rem 0.3rem;
     border-radius: 3px;
     font-size: 0.9em;
+  }}
+  details {{
+    margin-bottom: 0.15rem;
+    margin-left: 1.5rem;
+  }}
+  details summary {{
+    cursor: pointer;
+    list-style: none;
+  }}
+  details summary::before {{
+    content: '\25b6  ';
+    font-size: 0.7em;
+    margin-right: 0.3em;
+  }}
+  details[open] summary::before {{
+    content: '\25bc  ';
+  }}
+  details > p {{
+    margin: 0.5rem 0;
+    padding-left: 1rem;
+    font-size: 0.9em;
+    word-break: break-all;
   }}
   .group-content {{
     overflow: hidden;

@@ -40,7 +40,7 @@ macro_rules! test_report {
         let name = &name[..name.len() - 3];
         // In async fns, the path ends with "::{{closure}}" — strip that too
         let name = name.strip_suffix("::{{closure}}").unwrap_or(name);
-        $crate::common::TestReport::new(name, $title)
+        $crate::common::TestReport::new(name, $title, file!(), line!())
     }};
 }
 
@@ -67,16 +67,30 @@ pub struct TestReport {
     title: String,
     steps: Mutex<Vec<Step>>,
     report_dir: Option<PathBuf>,
+    source_file: String,
+    source_line: u32,
 }
 
 impl TestReport {
-    pub fn new(full_path: &str, title: &str) -> Self {
+    pub fn new(full_path: &str, title: &str, source_file: &str, source_line: u32) -> Self {
         let report_dir = std::env::var("TEST_REPORT_DIR").ok().map(PathBuf::from);
         Self {
             full_path: full_path.to_string(),
             title: title.to_string(),
             steps: Mutex::new(Vec::new()),
             report_dir,
+            source_file: source_file.to_string(),
+            source_line,
+        }
+    }
+
+    /// Format a Debug-formatted value for report display.
+    /// Wraps in backticks. Truncates at `max_len` chars to prevent huge report files.
+    fn truncate_for_display(debug_str: &str, max_len: usize) -> String {
+        if debug_str.len() <= max_len {
+            format!("`{}`", debug_str)
+        } else {
+            format!("`{}…` ({} bytes)", &debug_str[..max_len], debug_str.len())
         }
     }
 
@@ -100,7 +114,9 @@ impl TestReport {
         E: Debug,
     {
         let pass = actual == expected;
-        let msg = format!("{}: {:?} == {:?}", label, actual, expected);
+        let actual_s = Self::truncate_for_display(&format!("{:?}", actual), 1000);
+        let expected_s = Self::truncate_for_display(&format!("{:?}", expected), 1000);
+        let msg = format!("{}: {} == {}", label, actual_s, expected_s);
         self.steps.lock().unwrap().push(if pass {
             Step::AssertPass(msg)
         } else {
@@ -111,7 +127,9 @@ impl TestReport {
 
     pub fn assert_contains(&self, label: &str, haystack: &str, needle: &str) {
         let pass = haystack.contains(needle);
-        let msg = format!("{}: {:?} contains {:?}", label, haystack, needle);
+        let haystack_s = Self::truncate_for_display(&format!("{:?}", haystack), 1000);
+        let needle_s = Self::truncate_for_display(&format!("{:?}", needle), 1000);
+        let msg = format!("{}: {} contains {}", label, haystack_s, needle_s);
         self.steps.lock().unwrap().push(if pass {
             Step::AssertPass(msg)
         } else {
@@ -126,7 +144,9 @@ impl TestReport {
 
     pub fn assert_not_contains(&self, label: &str, haystack: &str, needle: &str) {
         let pass = !haystack.contains(needle);
-        let msg = format!("{}: {:?} does not contain {:?}", label, haystack, needle);
+        let haystack_s = Self::truncate_for_display(&format!("{:?}", haystack), 1000);
+        let needle_s = Self::truncate_for_display(&format!("{:?}", needle), 1000);
+        let msg = format!("{}: {} does not contain {}", label, haystack_s, needle_s);
         self.steps.lock().unwrap().push(if pass {
             Step::AssertPass(msg)
         } else {
@@ -140,7 +160,7 @@ impl TestReport {
     }
 
     pub fn assert_true(&self, label: &str, value: bool) {
-        let msg = format!("{}: {}", label, value);
+        let msg = format!("{}: `{}`", label, value);
         self.steps.lock().unwrap().push(if value {
             Step::AssertPass(msg)
         } else {
@@ -151,7 +171,9 @@ impl TestReport {
 
     pub fn assert_starts_with(&self, label: &str, value: &str, prefix: &str) {
         let pass = value.starts_with(prefix);
-        let msg = format!("{}: {:?} starts with {:?}", label, value, prefix);
+        let value_s = Self::truncate_for_display(&format!("{:?}", value), 1000);
+        let prefix_s = Self::truncate_for_display(&format!("{:?}", prefix), 1000);
+        let msg = format!("{}: {} starts with {}", label, value_s, prefix_s);
         self.steps.lock().unwrap().push(if pass {
             Step::AssertPass(msg)
         } else {
@@ -198,6 +220,7 @@ impl TestReport {
         lines.push(format!("GROUP: {}", self.group()));
         lines.push(format!("NAME: {}", self.name()));
         lines.push(format!("TITLE: {}", self.title));
+        lines.push(format!("SOURCE: {}:{}", self.source_file, self.source_line));
         for step in steps.iter() {
             lines.push(step.to_report_line());
         }
@@ -242,7 +265,7 @@ impl<'a> ReportingClient<'a> {
     }
 
     pub async fn get(&self, url: &str) -> reqwest::Response {
-        self.report.action(format!("GET {}", url));
+        self.report.action(format!("GET `{}`", url));
         self.inner.get(url).send().await.unwrap()
     }
 
@@ -257,7 +280,7 @@ impl<'a> ReportingClient<'a> {
     }
 
     pub async fn post(&self, url: &str) -> reqwest::Response {
-        self.report.action(format!("POST {}", url));
+        self.report.action(format!("POST `{}`", url));
         self.inner.post(url).send().await.unwrap()
     }
 
@@ -266,7 +289,7 @@ impl<'a> ReportingClient<'a> {
         url: &str,
         body: impl Into<reqwest::Body>,
     ) -> reqwest::Response {
-        self.report.action(format!("POST {} (with body)", url));
+        self.report.action(format!("POST `{}` (with body)", url));
         self.inner.post(url).body(body).send().await.unwrap()
     }
 
@@ -276,7 +299,8 @@ impl<'a> ReportingClient<'a> {
             .map(|(k, v)| format!("{}:{}", k, v))
             .collect::<Vec<_>>()
             .join(", ");
-        self.report.action(format!("GET {} [{}]", url, header_desc));
+        self.report
+            .action(format!("GET `{}` [{}]", url, header_desc));
         let mut req = self.inner.get(url);
         for (k, v) in headers {
             req = req.header(*k, *v);
@@ -285,7 +309,7 @@ impl<'a> ReportingClient<'a> {
     }
 
     pub async fn request(&self, method: reqwest::Method, url: &str) -> reqwest::Response {
-        self.report.action(format!("{} {}", method, url));
+        self.report.action(format!("{} `{}`", method, url));
         self.inner
             .request(method, url.parse::<reqwest::Url>().unwrap())
             .send()
@@ -294,7 +318,8 @@ impl<'a> ReportingClient<'a> {
     }
 
     pub async fn get_with_header(&self, url: &str, key: &str, val: &str) -> reqwest::Response {
-        self.report.action(format!("GET {} [{}:{}]", url, key, val));
+        self.report
+            .action(format!("GET `{}` [{}:{}]", url, key, val));
         self.inner.get(url).header(key, val).send().await.unwrap()
     }
 
