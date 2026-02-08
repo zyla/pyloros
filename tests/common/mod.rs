@@ -292,8 +292,44 @@ impl<'a> ReportingClient<'a> {
         self.inner.get(url).send().await.unwrap()
     }
 
+    pub fn new_with_proxy_auth(
+        report: &'a TestReport,
+        proxy_addr: SocketAddr,
+        ca: &TestCa,
+        username: &str,
+        password: &str,
+    ) -> Self {
+        let proxy_url = format!("http://{}:{}@{}", username, password, proxy_addr);
+        let proxy = reqwest::Proxy::all(&proxy_url).unwrap();
+        let ca_cert = reqwest::tls::Certificate::from_pem(ca.cert_pem.as_bytes()).unwrap();
+        let client = reqwest::Client::builder()
+            .proxy(proxy)
+            .add_root_certificate(ca_cert)
+            .build()
+            .unwrap();
+        Self {
+            inner: client,
+            report,
+        }
+    }
+
     pub fn new_plain(report: &'a TestReport, proxy_addr: SocketAddr) -> Self {
         let proxy_url = format!("http://{}", proxy_addr);
+        let proxy = reqwest::Proxy::all(&proxy_url).unwrap();
+        let client = reqwest::Client::builder().proxy(proxy).build().unwrap();
+        Self {
+            inner: client,
+            report,
+        }
+    }
+
+    pub fn new_plain_with_proxy_auth(
+        report: &'a TestReport,
+        proxy_addr: SocketAddr,
+        username: &str,
+        password: &str,
+    ) -> Self {
+        let proxy_url = format!("http://{}:{}@{}", username, password, proxy_addr);
         let proxy = reqwest::Proxy::all(&proxy_url).unwrap();
         let client = reqwest::Client::builder().proxy(proxy).build().unwrap();
         Self {
@@ -625,6 +661,16 @@ impl TestProxy {
         Self::start_inner(ca, rules, Vec::new(), upstream_port).await
     }
 
+    /// Start a proxy with authentication.
+    pub async fn start_with_auth(
+        ca: &TestCa,
+        rules: Vec<redlimitador::config::Rule>,
+        auth: Option<(String, String)>,
+        upstream_port: u16,
+    ) -> Self {
+        Self::start_inner_with_host_and_auth(ca, rules, Vec::new(), upstream_port, None, auth).await
+    }
+
     /// Start a proxy with credential injection.
     pub async fn start_with_credentials(
         ca: &TestCa,
@@ -690,12 +736,13 @@ impl TestProxy {
             "Proxy with rules: [{}] (host override: {})",
             desc, upstream_host
         ));
-        Self::start_inner_with_host(
+        Self::start_inner_with_host_and_auth(
             ca,
             rules,
             Vec::new(),
             upstream_port,
             Some(upstream_host.to_string()),
+            None,
         )
         .await
     }
@@ -706,7 +753,8 @@ impl TestProxy {
         credentials: Vec<pyloros::config::Credential>,
         upstream_port: u16,
     ) -> Self {
-        Self::start_inner_with_host(ca, rules, credentials, upstream_port, None).await
+        Self::start_inner_with_host_and_auth(ca, rules, credentials, upstream_port, None, None)
+            .await
     }
 
     async fn start_inner_with_host(
@@ -716,6 +764,25 @@ impl TestProxy {
         upstream_port: u16,
         upstream_host: Option<String>,
     ) -> Self {
+        Self::start_inner_with_host_and_auth(
+            ca,
+            rules,
+            credentials,
+            upstream_port,
+            upstream_host,
+            None,
+        )
+        .await
+    }
+
+    async fn start_inner_with_host_and_auth(
+        ca: &TestCa,
+        rules: Vec<redlimitador::config::Rule>,
+        credentials: Vec<redlimitador::config::Credential>,
+        upstream_port: u16,
+        upstream_host: Option<String>,
+        auth: Option<(String, String)>,
+    ) -> Self {
         let mut config = Config::minimal(
             "127.0.0.1:0".to_string(),
             ca.cert_path.clone(),
@@ -723,6 +790,10 @@ impl TestProxy {
         );
         config.rules = rules;
         config.credentials = credentials;
+        if let Some((username, password)) = auth {
+            config.proxy.auth_username = Some(username);
+            config.proxy.auth_password = Some(password);
+        }
         config.logging.log_allowed_requests = false;
         config.logging.log_blocked_requests = false;
 
