@@ -23,6 +23,7 @@ pub struct ProxyServer {
     mitm_generator: Arc<MitmCertificateGenerator>,
     listener: Option<TcpListener>,
     upstream_port_override: Option<u16>,
+    upstream_host_override: Option<String>,
     upstream_tls_config: Option<Arc<ClientConfig>>,
 }
 
@@ -63,6 +64,7 @@ impl ProxyServer {
             mitm_generator,
             listener: None,
             upstream_port_override: None,
+            upstream_host_override: None,
             upstream_tls_config: None,
         })
     }
@@ -81,6 +83,7 @@ impl ProxyServer {
             mitm_generator,
             listener: None,
             upstream_port_override: None,
+            upstream_host_override: None,
             upstream_tls_config: None,
         }
     }
@@ -88,6 +91,13 @@ impl ProxyServer {
     /// Override the upstream port for all forwarded connections (for testing).
     pub fn with_upstream_port_override(mut self, port: u16) -> Self {
         self.upstream_port_override = Some(port);
+        self
+    }
+
+    /// Override the upstream host for TCP connections (for testing with non-resolvable hostnames).
+    /// The original hostname is still used for TLS SNI.
+    pub fn with_upstream_host_override(mut self, host: String) -> Self {
+        self.upstream_host_override = Some(host);
         self
     }
 
@@ -207,6 +217,9 @@ impl ProxyServer {
         );
         if let Some(port) = self.upstream_port_override {
             handler = handler.with_upstream_port_override(port);
+        }
+        if let Some(ref host) = self.upstream_host_override {
+            handler = handler.with_upstream_host_override(host.clone());
         }
         if let Some(ref config) = self.upstream_tls_config {
             handler = handler.with_upstream_tls(config.clone());

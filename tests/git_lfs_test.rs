@@ -7,9 +7,12 @@
 mod common;
 
 use common::{
-    git_rule, git_rule_with_branches, ok_handler, rule, ReportingClient, TestCa, TestProxy,
-    TestUpstream,
+    create_test_repo_with_lfs, git_http_backend_path, git_lfs_available, git_rule,
+    git_rule_with_branches, lfs_git_handler, ok_handler, rule, ReportingClient, RequestLog, TestCa,
+    TestProxy, TestUpstream,
 };
+use std::sync::{Arc, Mutex};
+use tempfile::TempDir;
 
 /// Helper to build an LFS batch JSON body.
 fn lfs_batch_body(operation: &str) -> String {
@@ -480,6 +483,273 @@ async fn test_lfs_transfer_url_allowed_with_separate_rule() {
         .get("https://localhost/org/repo/lfs/objects/abc123def456")
         .await;
     t.assert_eq("status 200", &resp.status().as_u16(), &200u16);
+
+    proxy.shutdown();
+    upstream.shutdown();
+}
+
+// ---------------------------------------------------------------------------
+// E2e tests with real git-lfs binary
+// ---------------------------------------------------------------------------
+
+// Use a non-localhost hostname for LFS e2e tests. Go's HTTP client (used by
+// git-lfs) has a hard-coded exclusion that never proxies requests to "localhost"
+// or loopback IPs. Using a non-resolvable hostname is fine because the CONNECT
+// proxy handles all connections — the client never resolves the hostname itself.
+const LFS_TEST_HOST: &str = "gitserver.test";
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_lfs_clone_downloads_content() {
+    let t = test_report!("Git clone with LFS downloads actual content (not pointer)");
+
+    if !git_lfs_available() {
+        t.skip("git-lfs not installed");
+        return;
+    }
+
+    let backend_path = git_http_backend_path();
+    let ca = TestCa::generate();
+    t.setup("Generated test CA");
+
+    let tmp = TempDir::new().unwrap();
+    let (repos_dir, lfs_store) = create_test_repo_with_lfs(tmp.path(), "repo.git");
+    t.setup(format!(
+        "Created test git repo with LFS at {:?} ({} LFS objects)",
+        repos_dir,
+        lfs_store.lock().unwrap().len()
+    ));
+
+    let request_log: RequestLog = Arc::new(Mutex::new(Vec::new()));
+
+    let upstream = TestUpstream::start_for_host_reported(
+        &t,
+        &ca,
+        LFS_TEST_HOST,
+        lfs_git_handler(backend_path, repos_dir, request_log.clone(), lfs_store),
+        "git http-backend + LFS mock",
+    )
+    .await;
+
+    let proxy = TestProxy::start_with_host_override_reported(
+        &t,
+        &ca,
+        vec![
+            git_rule("fetch", &format!("https://{}/*", LFS_TEST_HOST)),
+            rule("GET", &format!("https://{}/*/lfs/objects/*", LFS_TEST_HOST)),
+        ],
+        upstream.port(),
+        "127.0.0.1",
+    )
+    .await;
+
+    let clone_dir = tmp.path().join("cloned");
+    let proxy_url = format!("http://127.0.0.1:{}", proxy.addr().port());
+    let clone_url = format!("https://{}/repo.git", LFS_TEST_HOST);
+
+    let output = common::run_command_reported(
+        &t,
+        std::process::Command::new("git")
+            .args(["clone", &clone_url, clone_dir.to_str().unwrap()])
+            .env("HTTPS_PROXY", &proxy_url)
+            .env("GIT_SSL_CAINFO", &ca.cert_path)
+            .env("GIT_TERMINAL_PROMPT", "0"),
+    );
+
+    t.assert_eq("git clone exit code", &output.status.code().unwrap(), &0);
+
+    // The LFS-tracked file should contain actual content, not a pointer
+    let lfs_file = clone_dir.join("test-data.bin");
+    t.assert_true("LFS file exists", lfs_file.exists());
+
+    let content = std::fs::read_to_string(&lfs_file).unwrap();
+    t.assert_contains(
+        "LFS file has actual content (not pointer)",
+        &content,
+        "Hello from LFS!",
+    );
+    t.assert_not_contains(
+        "LFS file is not a pointer",
+        &content,
+        "version https://git-lfs",
+    );
+
+    proxy.shutdown();
+    upstream.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_lfs_push_uploads_content() {
+    let t = test_report!("Git push with LFS uploads objects to server");
+
+    if !git_lfs_available() {
+        t.skip("git-lfs not installed");
+        return;
+    }
+
+    let backend_path = git_http_backend_path();
+    let ca = TestCa::generate();
+    t.setup("Generated test CA");
+
+    let tmp = TempDir::new().unwrap();
+    let (repos_dir, lfs_store) = create_test_repo_with_lfs(tmp.path(), "repo.git");
+    let initial_lfs_count = lfs_store.lock().unwrap().len();
+    t.setup(format!(
+        "Created test git repo with LFS ({} initial LFS objects)",
+        initial_lfs_count
+    ));
+
+    let request_log: RequestLog = Arc::new(Mutex::new(Vec::new()));
+
+    let upstream = TestUpstream::start_for_host_reported(
+        &t,
+        &ca,
+        LFS_TEST_HOST,
+        lfs_git_handler(
+            backend_path,
+            repos_dir,
+            request_log.clone(),
+            lfs_store.clone(),
+        ),
+        "git http-backend + LFS mock",
+    )
+    .await;
+
+    let proxy = TestProxy::start_with_host_override_reported(
+        &t,
+        &ca,
+        vec![
+            git_rule("fetch", &format!("https://{}/*", LFS_TEST_HOST)),
+            git_rule("push", &format!("https://{}/*", LFS_TEST_HOST)),
+            rule("GET", &format!("https://{}/*/lfs/objects/*", LFS_TEST_HOST)),
+            rule("PUT", &format!("https://{}/*/lfs/objects/*", LFS_TEST_HOST)),
+        ],
+        upstream.port(),
+        "127.0.0.1",
+    )
+    .await;
+
+    let proxy_url = format!("http://127.0.0.1:{}", proxy.addr().port());
+    let clone_url = format!("https://{}/repo.git", LFS_TEST_HOST);
+
+    // Step 1: Clone through proxy
+    let clone_dir = tmp.path().join("cloned");
+    let output = common::run_command_reported(
+        &t,
+        std::process::Command::new("git")
+            .args(["clone", &clone_url, clone_dir.to_str().unwrap()])
+            .env("HTTPS_PROXY", &proxy_url)
+            .env("GIT_SSL_CAINFO", &ca.cert_path)
+            .env("GIT_TERMINAL_PROMPT", "0"),
+    );
+    t.assert_eq("git clone exit code", &output.status.code().unwrap(), &0);
+
+    // Step 2: Create a new LFS-tracked file and commit
+    let run_git = |args: &[&str], cwd: &std::path::Path| {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+
+    run_git(&["config", "user.email", "test@test.com"], &clone_dir);
+    run_git(&["config", "user.name", "Test User"], &clone_dir);
+
+    let new_content = b"New LFS content pushed through proxy!\n";
+    std::fs::write(clone_dir.join("pushed-data.bin"), new_content).unwrap();
+    run_git(&["add", "pushed-data.bin"], &clone_dir);
+    run_git(&["commit", "-m", "Add pushed-data.bin via LFS"], &clone_dir);
+    t.action("Created new commit with LFS-tracked pushed-data.bin");
+
+    // Step 3: Push through proxy
+    let output = common::run_command_reported(
+        &t,
+        std::process::Command::new("git")
+            .args(["push"])
+            .current_dir(&clone_dir)
+            .env("HTTPS_PROXY", &proxy_url)
+            .env("GIT_SSL_CAINFO", &ca.cert_path)
+            .env("GIT_TERMINAL_PROMPT", "0"),
+    );
+    t.assert_eq("git push exit code", &output.status.code().unwrap(), &0);
+
+    // Step 4: Verify the LFS store received the new object
+    let final_lfs_count = lfs_store.lock().unwrap().len();
+    t.assert_true(
+        "LFS store has more objects after push",
+        final_lfs_count > initial_lfs_count,
+    );
+
+    // Verify the uploaded content matches what we wrote
+    let store = lfs_store.lock().unwrap();
+    let found = store.values().any(|v| v == new_content);
+    t.assert_true("LFS store contains pushed content", found);
+
+    proxy.shutdown();
+    upstream.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_lfs_clone_blocked_without_fetch_rule() {
+    let t = test_report!("Git clone blocked with push-only rule (no fetch endpoints)");
+
+    if !git_lfs_available() {
+        t.skip("git-lfs not installed");
+        return;
+    }
+
+    let backend_path = git_http_backend_path();
+    let ca = TestCa::generate();
+    t.setup("Generated test CA");
+
+    let tmp = TempDir::new().unwrap();
+    let (repos_dir, lfs_store) = create_test_repo_with_lfs(tmp.path(), "repo.git");
+    t.setup("Created test git repo with LFS");
+
+    let request_log: RequestLog = Arc::new(Mutex::new(Vec::new()));
+
+    let upstream = TestUpstream::start_for_host_reported(
+        &t,
+        &ca,
+        LFS_TEST_HOST,
+        lfs_git_handler(backend_path, repos_dir, request_log.clone(), lfs_store),
+        "git http-backend + LFS mock",
+    )
+    .await;
+
+    // Push-only rule: no fetch endpoints, no LFS download
+    let proxy = TestProxy::start_with_host_override_reported(
+        &t,
+        &ca,
+        vec![git_rule("push", &format!("https://{}/*", LFS_TEST_HOST))],
+        upstream.port(),
+        "127.0.0.1",
+    )
+    .await;
+
+    let clone_dir = tmp.path().join("cloned");
+    let clone_url = format!("https://{}/repo.git", LFS_TEST_HOST);
+
+    let output = common::run_command_reported(
+        &t,
+        std::process::Command::new("git")
+            .args(["clone", &clone_url, clone_dir.to_str().unwrap()])
+            .env(
+                "HTTPS_PROXY",
+                format!("http://127.0.0.1:{}", proxy.addr().port()),
+            )
+            .env("GIT_SSL_CAINFO", &ca.cert_path)
+            .env("GIT_TERMINAL_PROMPT", "0"),
+    );
+
+    // Clone should fail — push-only rule doesn't allow git-upload-pack endpoints
+    t.assert_true("git clone failed (no fetch rule)", !output.status.success());
 
     proxy.shutdown();
     upstream.shutdown();
