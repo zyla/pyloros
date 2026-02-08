@@ -1,0 +1,8 @@
+[[rules]]
+git = "fetch"
+url = "https://github.com/myorg/*"
+
+[[rules]]
+git = "push"
+url = "https://github.com/myorg/repo"
+branches = ["feature/*", "fix/*"]

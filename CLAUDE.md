@@ -18,6 +18,11 @@ scripts/test-report.sh       # Run tests + generate test-report.md / test-report
 cargo llvm-cov                                  # Text summary
 cargo llvm-cov --html                           # HTML report in coverage/
 cargo llvm-cov --lcov --output-path lcov.info   # LCOV format
+
+# Fuzzing (one-time setup: cargo +nightly install cargo-fuzz)
+cargo +nightly fuzz list                        # List fuzz targets
+cargo +nightly fuzz run fuzz_pktline -- -max_total_time=60  # Time-limited run
+cargo +nightly fuzz run fuzz_config fuzz/seeds/fuzz_config  # Run with seed corpus
 ```
 
 ## CLI Commands

@@ -82,13 +82,21 @@ impl PatternMatcher {
                     // Trailing wildcard matches everything
                     true
                 } else {
-                    // Try matching rest of pattern at each position
-                    for i in 0..=text.len() {
+                    // Try matching rest of pattern at each char boundary.
+                    // char_indices yields (byte_offset, char) for each character;
+                    // we also need to try the position past the last character.
+                    let mut last_end = 0;
+                    for (i, _) in text.char_indices() {
                         if self.match_segments(&segments[1..], &text[i..]) {
                             return true;
                         }
+                        last_end = i;
                     }
-                    false
+                    // Try the position after the last char (i.e., empty remainder)
+                    if !text.is_empty() {
+                        last_end += text[last_end..].chars().next().unwrap().len_utf8();
+                    }
+                    self.match_segments(&segments[1..], &text[last_end..])
                 }
             }
         }
