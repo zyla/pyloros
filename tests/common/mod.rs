@@ -629,12 +629,21 @@ impl TestProxy {
         let desc = rules
             .iter()
             .map(|r| {
-                format!(
-                    "`{} {}`{}",
-                    r.method,
-                    r.url,
-                    if r.websocket { " [ws]" } else { "" }
-                )
+                if let Some(ref git) = r.git {
+                    let branches_desc = r
+                        .branches
+                        .as_ref()
+                        .map(|b| format!(" branches={:?}", b))
+                        .unwrap_or_default();
+                    format!("`git={} {}`{}", git, r.url, branches_desc)
+                } else {
+                    format!(
+                        "`{} {}`{}",
+                        r.method.as_deref().unwrap_or("?"),
+                        r.url,
+                        if r.websocket { " [ws]" } else { "" }
+                    )
+                }
             })
             .collect::<Vec<_>>()
             .join(", ");
@@ -796,17 +805,21 @@ pub fn run_command_reported(
 
 pub fn rule(method: &str, url: &str) -> redlimitador::config::Rule {
     redlimitador::config::Rule {
-        method: method.to_string(),
+        method: Some(method.to_string()),
         url: url.to_string(),
         websocket: false,
+        git: None,
+        branches: None,
     }
 }
 
 pub fn ws_rule(url: &str) -> redlimitador::config::Rule {
     redlimitador::config::Rule {
-        method: "GET".to_string(),
+        method: Some("GET".to_string()),
         url: url.to_string(),
         websocket: true,
+        git: None,
+        branches: None,
     }
 }
 

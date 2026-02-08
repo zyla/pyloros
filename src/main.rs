@@ -230,8 +230,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!();
                 println!("Rules:");
                 for (i, rule) in cfg.rules.iter().enumerate() {
-                    let ws = if rule.websocket { " [WebSocket]" } else { "" };
-                    println!("  {}. {} {}{}", i + 1, rule.method, rule.url, ws);
+                    if let Some(ref git) = rule.git {
+                        let branches_desc = rule
+                            .branches
+                            .as_ref()
+                            .map(|b| format!(" branches={:?}", b))
+                            .unwrap_or_default();
+                        println!("  {}. git={} {}{}", i + 1, git, rule.url, branches_desc);
+                    } else {
+                        let ws = if rule.websocket { " [WebSocket]" } else { "" };
+                        println!(
+                            "  {}. {} {}{}",
+                            i + 1,
+                            rule.method.as_deref().unwrap_or("?"),
+                            rule.url,
+                            ws
+                        );
+                    }
                 }
             }
 
