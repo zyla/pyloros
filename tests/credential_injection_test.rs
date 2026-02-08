@@ -4,6 +4,7 @@ mod common;
 
 use common::{echo_handler, rule, ReportingClient, TestCa, TestProxy, TestUpstream};
 use pyloros::config::Credential;
+use wiremock::{matchers::any, Mock, MockServer, ResponseTemplate};
 
 fn cred(url: &str, header: &str, value: &str) -> Credential {
     Credential::Header {
@@ -165,60 +166,14 @@ async fn test_no_injection_over_plain_http() {
     let t = test_report!("No injection over plain HTTP");
     let ca = TestCa::generate();
 
-    // Start a plain HTTP upstream (no TLS) for this test
-    use bytes::Bytes;
-    use http_body_util::{combinators::BoxBody, BodyExt, Full};
-    use hyper::body::Incoming;
-    use hyper::server::conn::http1;
-    use hyper::service::service_fn;
-    use hyper::{Request, Response, StatusCode};
-    use hyper_util::rt::TokioIo;
-    use tokio::net::TcpListener;
+    let upstream = MockServer::start().await;
+    t.setup("MockServer returning 200 'ok'");
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+        .mount(&upstream)
+        .await;
 
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let plain_port = listener.local_addr().unwrap().port();
-    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-
-    // Simple echo handler over plain HTTP
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                _ = &mut shutdown_rx => break,
-                result = listener.accept() => {
-                    let (stream, _) = match result {
-                        Ok(conn) => conn,
-                        Err(_) => continue,
-                    };
-
-                    tokio::spawn(async move {
-                        let io = TokioIo::new(stream);
-                        let service = service_fn(|req: Request<Incoming>| {
-                            async move {
-                                let mut header_lines = Vec::new();
-                                for (name, value) in req.headers().iter() {
-                                    header_lines.push(format!("{}: {}", name, value.to_str().unwrap_or("?")));
-                                }
-                                let body = format!("headers:\n{}\n", header_lines.join("\n"));
-                                let body: BoxBody<Bytes, hyper::Error> =
-                                    Full::new(Bytes::from(body))
-                                        .map_err(|e| match e {})
-                                        .boxed();
-                                Ok::<_, hyper::Error>(
-                                    Response::builder()
-                                        .status(StatusCode::OK)
-                                        .body(body)
-                                        .unwrap(),
-                                )
-                            }
-                        });
-                        let _ = http1::Builder::new()
-                            .serve_connection(io, service)
-                            .await;
-                    });
-                }
-            }
-        }
-    });
+    let plain_port = upstream.address().port();
 
     // Proxy with credential and an HTTP rule that allows the request
     let proxy = TestProxy::start_with_credentials(
@@ -229,7 +184,7 @@ async fn test_no_injection_over_plain_http() {
             "x-api-key",
             "should-not-inject",
         )],
-        plain_port, // upstream_port (unused for plain HTTP forwarding)
+        plain_port,
     )
     .await;
 
@@ -238,11 +193,15 @@ async fn test_no_injection_over_plain_http() {
     let resp = client
         .get(&format!("http://localhost:{}/test", plain_port))
         .await;
-    let body = resp.text().await.unwrap();
-    t.assert_not_contains("no injection on HTTP", &body, "x-api-key");
+    t.assert_eq("status 200", &resp.status().as_u16(), &200u16);
+
+    // Verify the upstream received the request without the injected header
+    let requests = upstream.received_requests().await.unwrap();
+    t.assert_eq("one request received", &requests.len(), &1usize);
+    let has_api_key = requests[0].headers.get("x-api-key").is_some();
+    t.assert_true("no x-api-key header", !has_api_key);
 
     proxy.shutdown();
-    let _ = shutdown_tx.send(());
 }
 
 #[tokio::test]
