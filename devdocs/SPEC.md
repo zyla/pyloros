@@ -179,7 +179,14 @@ When adding new code paths with conditional logic (especially `if`, `match`, `==
 
 ### Git Smart HTTP Tests
 
-Integration tests verify that git smart HTTP operations (clone, push) work correctly through the proxy's HTTPS MITM pipeline. Tests run a local git smart HTTP server (via `git http-backend` CGI), route `git clone`/`git push` commands through the proxy, and verify end-to-end correctness.
+Integration tests verify that git smart HTTP operations (clone, push) work correctly through the proxy's HTTPS MITM pipeline using git-specific config rules (`git = "fetch"`, `git = "push"`, `git = "*"`). Tests run a local git smart HTTP server (via `git http-backend` CGI), route `git clone`/`git push` commands through the proxy, and verify end-to-end correctness.
+
+Test coverage includes:
+- Basic clone/push through proxy with git rules (`git_smart_http_test.rs`)
+- Operation-level filtering: fetch-only rule blocks push, push-only blocks clone (`git_rules_test.rs`)
+- Repo-level filtering: URL patterns restrict which repos are accessible (`git_rules_test.rs`)
+- Branch-level restriction: `branches` patterns allow/block pushes to specific refs (`git_rules_test.rs`)
+- Pkt-line parser unit tests: ref extraction, capabilities handling, branch matching (`pktline.rs`)
 
 ### Test Report Generation
 
