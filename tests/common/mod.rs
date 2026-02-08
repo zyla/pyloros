@@ -15,17 +15,14 @@ use pyloros::{Config, ProxyServer};
 use rustls::pki_types::CertificateDer;
 use rustls::{ClientConfig, ServerConfig};
 use std::collections::HashMap;
-use std::fmt::{Debug, Display};
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
-// ---------------------------------------------------------------------------
-// TestReport — structured test reporting
-// ---------------------------------------------------------------------------
+// Re-export TestReport from the shared crate so existing test_report! macro works
+pub use pyloros_test_support::TestReport;
 
 /// Auto-detect the test name from the calling function.
 /// Must be called from the test function body (not a helper).
@@ -43,224 +40,6 @@ macro_rules! test_report {
         let name = name.strip_suffix("::{{closure}}").unwrap_or(name);
         $crate::common::TestReport::new(name, $title, file!(), line!())
     }};
-}
-
-enum Step {
-    Setup(String),
-    Action(String),
-    AssertPass(String),
-    AssertFail(String),
-    Output { label: String, text: String },
-}
-
-impl Step {
-    fn to_report_line(&self) -> String {
-        match self {
-            Step::Setup(msg) => format!("STEP setup: {}", msg),
-            Step::Action(msg) => format!("STEP action: {}", msg),
-            Step::AssertPass(msg) => format!("STEP assert_pass: {}", msg),
-            Step::AssertFail(msg) => format!("STEP assert_fail: {}", msg),
-            Step::Output { label, text } => format!("STEP output {}: {:?}", label, text),
-        }
-    }
-}
-
-pub struct TestReport {
-    full_path: String,
-    title: String,
-    steps: Mutex<Vec<Step>>,
-    report_dir: Option<PathBuf>,
-    source_file: String,
-    source_line: u32,
-    skipped: Mutex<Option<String>>,
-}
-
-impl TestReport {
-    pub fn new(full_path: &str, title: &str, source_file: &str, source_line: u32) -> Self {
-        let report_dir = std::env::var("TEST_REPORT_DIR").ok().map(PathBuf::from);
-        Self {
-            full_path: full_path.to_string(),
-            title: title.to_string(),
-            steps: Mutex::new(Vec::new()),
-            report_dir,
-            source_file: source_file.to_string(),
-            source_line,
-            skipped: Mutex::new(None),
-        }
-    }
-
-    /// Mark this test as skipped with a reason. Call before returning early.
-    pub fn skip(&self, reason: impl Display) {
-        *self.skipped.lock().unwrap() = Some(reason.to_string());
-    }
-
-    /// Format a Debug-formatted value for report display.
-    /// Wraps in backticks. Truncates at `max_len` chars to prevent huge report files.
-    fn truncate_for_display(debug_str: &str, max_len: usize) -> String {
-        if debug_str.len() <= max_len {
-            format!("`{}`", debug_str)
-        } else {
-            format!("`{}…` ({} bytes)", &debug_str[..max_len], debug_str.len())
-        }
-    }
-
-    pub fn setup(&self, msg: impl Display) {
-        self.steps
-            .lock()
-            .unwrap()
-            .push(Step::Setup(msg.to_string()));
-    }
-
-    pub fn action(&self, msg: impl Display) {
-        self.steps
-            .lock()
-            .unwrap()
-            .push(Step::Action(msg.to_string()));
-    }
-
-    pub fn output(&self, label: &str, text: &str) {
-        self.steps.lock().unwrap().push(Step::Output {
-            label: label.to_string(),
-            text: text.to_string(),
-        });
-    }
-
-    pub fn assert_eq<A, E>(&self, label: &str, actual: &A, expected: &E)
-    where
-        A: PartialEq<E> + Debug,
-        E: Debug,
-    {
-        let pass = actual == expected;
-        let actual_s = Self::truncate_for_display(&format!("{:?}", actual), 1000);
-        let expected_s = Self::truncate_for_display(&format!("{:?}", expected), 1000);
-        let msg = format!("{}: {} == {}", label, actual_s, expected_s);
-        self.steps.lock().unwrap().push(if pass {
-            Step::AssertPass(msg)
-        } else {
-            Step::AssertFail(msg.clone())
-        });
-        assert_eq!(actual, expected, "{}", label);
-    }
-
-    pub fn assert_contains(&self, label: &str, haystack: &str, needle: &str) {
-        let pass = haystack.contains(needle);
-        let haystack_s = Self::truncate_for_display(&format!("{:?}", haystack), 1000);
-        let needle_s = Self::truncate_for_display(&format!("{:?}", needle), 1000);
-        let msg = format!("{}: {} contains {}", label, haystack_s, needle_s);
-        self.steps.lock().unwrap().push(if pass {
-            Step::AssertPass(msg)
-        } else {
-            Step::AssertFail(msg.clone())
-        });
-        assert!(
-            pass,
-            "{}: {:?} does not contain {:?}",
-            label, haystack, needle
-        );
-    }
-
-    pub fn assert_not_contains(&self, label: &str, haystack: &str, needle: &str) {
-        let pass = !haystack.contains(needle);
-        let haystack_s = Self::truncate_for_display(&format!("{:?}", haystack), 1000);
-        let needle_s = Self::truncate_for_display(&format!("{:?}", needle), 1000);
-        let msg = format!("{}: {} does not contain {}", label, haystack_s, needle_s);
-        self.steps.lock().unwrap().push(if pass {
-            Step::AssertPass(msg)
-        } else {
-            Step::AssertFail(msg.clone())
-        });
-        assert!(
-            pass,
-            "{}: {:?} should not contain {:?}",
-            label, haystack, needle
-        );
-    }
-
-    pub fn assert_true(&self, label: &str, value: bool) {
-        let msg = format!("{}: `{}`", label, value);
-        self.steps.lock().unwrap().push(if value {
-            Step::AssertPass(msg)
-        } else {
-            Step::AssertFail(msg.clone())
-        });
-        assert!(value, "{}", label);
-    }
-
-    pub fn assert_starts_with(&self, label: &str, value: &str, prefix: &str) {
-        let pass = value.starts_with(prefix);
-        let value_s = Self::truncate_for_display(&format!("{:?}", value), 1000);
-        let prefix_s = Self::truncate_for_display(&format!("{:?}", prefix), 1000);
-        let msg = format!("{}: {} starts with {}", label, value_s, prefix_s);
-        self.steps.lock().unwrap().push(if pass {
-            Step::AssertPass(msg)
-        } else {
-            Step::AssertFail(msg.clone())
-        });
-        assert!(
-            pass,
-            "{}: {:?} does not start with {:?}",
-            label, value, prefix
-        );
-    }
-
-    /// Extract the group name (test file module) from the full path.
-    fn group(&self) -> &str {
-        // full_path looks like "proxy_basic_test::test_foo" or
-        // "crate_name::proxy_basic_test::test_foo"
-        // We want the second-to-last segment.
-        let parts: Vec<&str> = self.full_path.split("::").collect();
-        if parts.len() >= 2 {
-            parts[parts.len() - 2]
-        } else {
-            &self.full_path
-        }
-    }
-
-    /// Extract the test name (last segment) from the full path.
-    fn name(&self) -> &str {
-        self.full_path
-            .rsplit("::")
-            .next()
-            .unwrap_or(&self.full_path)
-    }
-
-    fn write_report(&self) {
-        let Some(dir) = &self.report_dir else {
-            return;
-        };
-
-        let skip_reason = self.skipped.lock().unwrap().clone();
-        let result = if let Some(reason) = &skip_reason {
-            format!("skip: {}", reason)
-        } else if std::thread::panicking() {
-            "fail".to_string()
-        } else {
-            "pass".to_string()
-        };
-
-        let steps = self.steps.lock().unwrap();
-        let mut lines = Vec::new();
-        lines.push(format!("GROUP: {}", self.group()));
-        lines.push(format!("NAME: {}", self.name()));
-        lines.push(format!("TITLE: {}", self.title));
-        lines.push(format!("SOURCE: {}:{}", self.source_file, self.source_line));
-        for step in steps.iter() {
-            lines.push(step.to_report_line());
-        }
-        lines.push(format!("RESULT: {}", result));
-        lines.push(String::new()); // trailing newline
-
-        let sanitized = self.full_path.replace("::", "__");
-        let path = dir.join(format!("{}.txt", sanitized));
-        let _ = std::fs::create_dir_all(dir);
-        let _ = std::fs::write(path, lines.join("\n"));
-    }
-}
-
-impl Drop for TestReport {
-    fn drop(&mut self) {
-        self.write_report();
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -490,57 +269,6 @@ pub struct TestUpstream {
 }
 
 impl TestUpstream {
-    /// Start a test upstream HTTPS server that responds with the given handler.
-    pub async fn start(ca: &TestCa, handler: UpstreamHandler) -> Self {
-        Self::start_for_host(ca, "localhost", handler).await
-    }
-
-    /// Start a test upstream with reporting.
-    pub async fn start_reported(
-        report: &TestReport,
-        ca: &TestCa,
-        handler: UpstreamHandler,
-        handler_desc: &str,
-    ) -> Self {
-        report.setup(format!("Upstream: {}", handler_desc));
-        Self::start(ca, handler).await
-    }
-
-    /// Start a test upstream HTTPS server with a cert for the given hostname (h2 + h1).
-    pub async fn start_for_host(ca: &TestCa, hostname: &str, handler: UpstreamHandler) -> Self {
-        let server_config = ca.server_tls_config(hostname);
-        Self::start_with_config(server_config, handler).await
-    }
-
-    /// Start a test upstream for a given hostname with reporting.
-    pub async fn start_for_host_reported(
-        report: &TestReport,
-        ca: &TestCa,
-        hostname: &str,
-        handler: UpstreamHandler,
-        handler_desc: &str,
-    ) -> Self {
-        report.setup(format!("Upstream ({}): {}", hostname, handler_desc));
-        Self::start_for_host(ca, hostname, handler).await
-    }
-
-    /// Start a test upstream HTTPS server that only speaks HTTP/1.1.
-    pub async fn start_h1_only(ca: &TestCa, handler: UpstreamHandler) -> Self {
-        let server_config = ca.server_tls_config_h1_only("localhost");
-        Self::start_with_config(server_config, handler).await
-    }
-
-    /// Start an H1-only test upstream with reporting.
-    pub async fn start_h1_only_reported(
-        report: &TestReport,
-        ca: &TestCa,
-        handler: UpstreamHandler,
-        handler_desc: &str,
-    ) -> Self {
-        report.setup(format!("Upstream (h1 only): {}", handler_desc));
-        Self::start_h1_only(ca, handler).await
-    }
-
     async fn start_with_config(server_config: Arc<ServerConfig>, handler: UpstreamHandler) -> Self {
         let h1_only = !server_config.alpn_protocols.iter().any(|p| p == b"h2");
         let acceptor = TlsAcceptor::from(server_config);
@@ -601,6 +329,61 @@ impl TestUpstream {
     pub fn shutdown(self) {
         let _ = self.shutdown_tx.send(());
     }
+
+    /// Create a builder for configuring a test upstream.
+    pub fn builder(ca: &TestCa, handler: UpstreamHandler) -> TestUpstreamBuilder<'_> {
+        TestUpstreamBuilder {
+            ca,
+            handler,
+            hostname: "localhost",
+            h1_only: false,
+            report: None,
+        }
+    }
+}
+
+pub struct TestUpstreamBuilder<'a> {
+    ca: &'a TestCa,
+    handler: UpstreamHandler,
+    hostname: &'a str,
+    h1_only: bool,
+    report: Option<(&'a TestReport, String)>,
+}
+
+impl<'a> TestUpstreamBuilder<'a> {
+    pub fn hostname(mut self, hostname: &'a str) -> Self {
+        self.hostname = hostname;
+        self
+    }
+
+    pub fn h1_only(mut self) -> Self {
+        self.h1_only = true;
+        self
+    }
+
+    pub fn report(mut self, report: &'a TestReport, desc: impl Into<String>) -> Self {
+        self.report = Some((report, desc.into()));
+        self
+    }
+
+    pub async fn start(self) -> TestUpstream {
+        if let Some((report, desc)) = &self.report {
+            if self.h1_only {
+                report.setup(format!("Upstream (h1 only): {}", desc));
+            } else if self.hostname != "localhost" {
+                report.setup(format!("Upstream ({}): {}", self.hostname, desc));
+            } else {
+                report.setup(format!("Upstream: {}", desc));
+            }
+        }
+
+        let server_config = if self.h1_only {
+            self.ca.server_tls_config_h1_only(self.hostname)
+        } else {
+            self.ca.server_tls_config(self.hostname)
+        };
+        TestUpstream::start_with_config(server_config, self.handler).await
+    }
 }
 
 /// A simple upstream handler that returns 200 with a text body.
@@ -656,126 +439,7 @@ pub struct TestProxy {
 }
 
 impl TestProxy {
-    /// Start a proxy configured with the given CA, rules, and upstream override.
-    pub async fn start(ca: &TestCa, rules: Vec<pyloros::config::Rule>, upstream_port: u16) -> Self {
-        Self::start_inner(ca, rules, Vec::new(), upstream_port).await
-    }
-
-    /// Start a proxy with authentication.
-    pub async fn start_with_auth(
-        ca: &TestCa,
-        rules: Vec<pyloros::config::Rule>,
-        auth: Option<(String, String)>,
-        upstream_port: u16,
-    ) -> Self {
-        Self::start_inner_with_host_and_auth(ca, rules, Vec::new(), upstream_port, None, auth).await
-    }
-
-    /// Start a proxy with credential injection.
-    pub async fn start_with_credentials(
-        ca: &TestCa,
-        rules: Vec<pyloros::config::Rule>,
-        credentials: Vec<pyloros::config::Credential>,
-        upstream_port: u16,
-    ) -> Self {
-        Self::start_inner(ca, rules, credentials, upstream_port).await
-    }
-
-    /// Start a proxy with reporting.
-    pub async fn start_reported(
-        report: &TestReport,
-        ca: &TestCa,
-        rules: Vec<pyloros::config::Rule>,
-        upstream_port: u16,
-    ) -> Self {
-        let desc = rules
-            .iter()
-            .map(|r| {
-                if let Some(ref git) = r.git {
-                    let branches_desc = r
-                        .branches
-                        .as_ref()
-                        .map(|b| format!(" branches={:?}", b))
-                        .unwrap_or_default();
-                    format!("`git={} {}`{}", git, r.url, branches_desc)
-                } else {
-                    format!(
-                        "`{} {}`{}",
-                        r.method.as_deref().unwrap_or("?"),
-                        r.url,
-                        if r.websocket { " [ws]" } else { "" }
-                    )
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        report.setup(format!("Proxy with rules: [{}]", desc));
-        Self::start_inner(ca, rules, Vec::new(), upstream_port).await
-    }
-
-    /// Start a proxy with reporting and upstream host override (for non-resolvable hostnames).
-    pub async fn start_with_host_override_reported(
-        report: &TestReport,
-        ca: &TestCa,
-        rules: Vec<pyloros::config::Rule>,
-        upstream_port: u16,
-        upstream_host: &str,
-    ) -> Self {
-        let desc = rules
-            .iter()
-            .map(|r| {
-                if let Some(ref git) = r.git {
-                    format!("`git={} {}`", git, r.url)
-                } else {
-                    format!("`{} {}`", r.method.as_deref().unwrap_or("?"), r.url)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        report.setup(format!(
-            "Proxy with rules: [{}] (host override: {})",
-            desc, upstream_host
-        ));
-        Self::start_inner_with_host_and_auth(
-            ca,
-            rules,
-            Vec::new(),
-            upstream_port,
-            Some(upstream_host.to_string()),
-            None,
-        )
-        .await
-    }
-
     async fn start_inner(
-        ca: &TestCa,
-        rules: Vec<pyloros::config::Rule>,
-        credentials: Vec<pyloros::config::Credential>,
-        upstream_port: u16,
-    ) -> Self {
-        Self::start_inner_with_host_and_auth(ca, rules, credentials, upstream_port, None, None)
-            .await
-    }
-
-    async fn start_inner_with_host(
-        ca: &TestCa,
-        rules: Vec<pyloros::config::Rule>,
-        credentials: Vec<pyloros::config::Credential>,
-        upstream_port: u16,
-        upstream_host: Option<String>,
-    ) -> Self {
-        Self::start_inner_with_host_and_auth(
-            ca,
-            rules,
-            credentials,
-            upstream_port,
-            upstream_host,
-            None,
-        )
-        .await
-    }
-
-    async fn start_inner_with_host_and_auth(
         ca: &TestCa,
         rules: Vec<pyloros::config::Rule>,
         credentials: Vec<pyloros::config::Credential>,
@@ -823,6 +487,100 @@ impl TestProxy {
 
     pub fn shutdown(self) {
         let _ = self.shutdown_tx.send(());
+    }
+
+    /// Create a builder for configuring a test proxy.
+    pub fn builder(
+        ca: &TestCa,
+        rules: Vec<pyloros::config::Rule>,
+        upstream_port: u16,
+    ) -> TestProxyBuilder<'_> {
+        TestProxyBuilder {
+            ca,
+            rules,
+            upstream_port,
+            credentials: Vec::new(),
+            upstream_host: None,
+            auth: None,
+            report: None,
+        }
+    }
+}
+
+pub struct TestProxyBuilder<'a> {
+    ca: &'a TestCa,
+    rules: Vec<pyloros::config::Rule>,
+    upstream_port: u16,
+    credentials: Vec<pyloros::config::Credential>,
+    upstream_host: Option<String>,
+    auth: Option<(String, String)>,
+    report: Option<&'a TestReport>,
+}
+
+impl<'a> TestProxyBuilder<'a> {
+    pub fn credentials(mut self, credentials: Vec<pyloros::config::Credential>) -> Self {
+        self.credentials = credentials;
+        self
+    }
+
+    pub fn upstream_host(mut self, host: &str) -> Self {
+        self.upstream_host = Some(host.to_string());
+        self
+    }
+
+    pub fn auth(mut self, username: &str, password: &str) -> Self {
+        self.auth = Some((username.to_string(), password.to_string()));
+        self
+    }
+
+    pub fn report(mut self, report: &'a TestReport) -> Self {
+        self.report = Some(report);
+        self
+    }
+
+    pub async fn start(self) -> TestProxy {
+        if let Some(report) = self.report {
+            let desc = self
+                .rules
+                .iter()
+                .map(|r| {
+                    if let Some(ref git) = r.git {
+                        let branches_desc = r
+                            .branches
+                            .as_ref()
+                            .map(|b| format!(" branches={:?}", b))
+                            .unwrap_or_default();
+                        format!("`git={} {}`{}", git, r.url, branches_desc)
+                    } else {
+                        format!(
+                            "`{} {}`{}",
+                            r.method.as_deref().unwrap_or("?"),
+                            r.url,
+                            if r.websocket { " [ws]" } else { "" }
+                        )
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            if let Some(ref host) = self.upstream_host {
+                report.setup(format!(
+                    "Proxy with rules: [{}] (host override: {})",
+                    desc, host
+                ));
+            } else {
+                report.setup(format!("Proxy with rules: [{}]", desc));
+            }
+        }
+
+        TestProxy::start_inner(
+            self.ca,
+            self.rules,
+            self.credentials,
+            self.upstream_port,
+            self.upstream_host,
+            self.auth,
+        )
+        .await
     }
 }
 

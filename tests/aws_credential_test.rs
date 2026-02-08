@@ -145,20 +145,19 @@ fn fake_aws_handler() -> UpstreamHandler {
 async fn test_sigv4_resigning_replaces_fake_key() {
     let t = test_report!("SigV4 re-signing replaces fake key with real key");
     let ca = TestCa::generate();
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, fake_aws_handler(), "fake AWS handler").await;
-    let proxy = TestProxy::start_with_credentials(
-        &ca,
-        vec![rule("*", "https://localhost/*")],
-        vec![aws_cred(
+    let upstream = TestUpstream::builder(&ca, fake_aws_handler())
+        .report(&t, "fake AWS handler")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(&ca, vec![rule("*", "https://localhost/*")], upstream.port())
+        .credentials(vec![aws_cred(
             "https://localhost/*",
             "AKIAREAL123456789012",
             "RealSecretAccessKeyForTesting123456789012",
             None,
-        )],
-        upstream.port(),
-    )
-    .await;
+        )])
+        .start()
+        .await;
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
 
     // Send request with fake AWS credentials
@@ -190,20 +189,19 @@ async fn test_sigv4_resigning_replaces_fake_key() {
 async fn test_sigv4_region_service_preserved() {
     let t = test_report!("Region/service preserved from original signature");
     let ca = TestCa::generate();
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, fake_aws_handler(), "fake AWS handler").await;
-    let proxy = TestProxy::start_with_credentials(
-        &ca,
-        vec![rule("*", "https://localhost/*")],
-        vec![aws_cred(
+    let upstream = TestUpstream::builder(&ca, fake_aws_handler())
+        .report(&t, "fake AWS handler")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(&ca, vec![rule("*", "https://localhost/*")], upstream.port())
+        .credentials(vec![aws_cred(
             "https://localhost/*",
             "AKIAREAL123456789012",
             "RealSecret",
             None,
-        )],
-        upstream.port(),
-    )
-    .await;
+        )])
+        .start()
+        .await;
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
 
     let fake_auth = fake_aws_auth("AKIAFAKE000000000000", "eu-west-1", "s3");
@@ -227,20 +225,19 @@ async fn test_sigv4_region_service_preserved() {
 async fn test_sigv4_session_token_injected() {
     let t = test_report!("Session token injected when configured");
     let ca = TestCa::generate();
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, fake_aws_handler(), "fake AWS handler").await;
-    let proxy = TestProxy::start_with_credentials(
-        &ca,
-        vec![rule("*", "https://localhost/*")],
-        vec![aws_cred(
+    let upstream = TestUpstream::builder(&ca, fake_aws_handler())
+        .report(&t, "fake AWS handler")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(&ca, vec![rule("*", "https://localhost/*")], upstream.port())
+        .credentials(vec![aws_cred(
             "https://localhost/*",
             "AKIAREAL123456789012",
             "RealSecret",
             Some("MySessionToken123"),
-        )],
-        upstream.port(),
-    )
-    .await;
+        )])
+        .start()
+        .await;
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
 
     let fake_auth = fake_aws_auth("AKIAFAKE000000000000", "us-east-1", "sts");
@@ -265,20 +262,19 @@ async fn test_sigv4_session_token_injected() {
 async fn test_sigv4_body_hash_correctness_post() {
     let t = test_report!("Body hash correctness (POST with body)");
     let ca = TestCa::generate();
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, fake_aws_handler(), "fake AWS handler").await;
-    let proxy = TestProxy::start_with_credentials(
-        &ca,
-        vec![rule("*", "https://localhost/*")],
-        vec![aws_cred(
+    let upstream = TestUpstream::builder(&ca, fake_aws_handler())
+        .report(&t, "fake AWS handler")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(&ca, vec![rule("*", "https://localhost/*")], upstream.port())
+        .credentials(vec![aws_cred(
             "https://localhost/*",
             "AKIAREAL123456789012",
             "RealSecret",
             None,
-        )],
-        upstream.port(),
-    )
-    .await;
+        )])
+        .start()
+        .await;
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
 
     let post_body = "Action=GetCallerIdentity&Version=2011-06-15";
@@ -310,20 +306,19 @@ async fn test_sigv4_body_hash_correctness_post() {
 async fn test_sigv4_empty_body_hash() {
     let t = test_report!("GET request with empty body has correct hash");
     let ca = TestCa::generate();
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, fake_aws_handler(), "fake AWS handler").await;
-    let proxy = TestProxy::start_with_credentials(
-        &ca,
-        vec![rule("*", "https://localhost/*")],
-        vec![aws_cred(
+    let upstream = TestUpstream::builder(&ca, fake_aws_handler())
+        .report(&t, "fake AWS handler")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(&ca, vec![rule("*", "https://localhost/*")], upstream.port())
+        .credentials(vec![aws_cred(
             "https://localhost/*",
             "AKIAREAL123456789012",
             "RealSecret",
             None,
-        )],
-        upstream.port(),
-    )
-    .await;
+        )])
+        .start()
+        .await;
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
 
     let fake_auth = fake_aws_auth("AKIAFAKE000000000000", "us-east-1", "sts");
@@ -348,12 +343,12 @@ async fn test_sigv4_empty_body_hash() {
 async fn test_sigv4_mixed_with_header_credential() {
     let t = test_report!("Mixed header + SigV4 credentials both applied");
     let ca = TestCa::generate();
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, fake_aws_handler(), "fake AWS handler").await;
-    let proxy = TestProxy::start_with_credentials(
-        &ca,
-        vec![rule("*", "https://localhost/*")],
-        vec![
+    let upstream = TestUpstream::builder(&ca, fake_aws_handler())
+        .report(&t, "fake AWS handler")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(&ca, vec![rule("*", "https://localhost/*")], upstream.port())
+        .credentials(vec![
             header_cred("https://localhost/*", "x-custom-header", "custom-value"),
             aws_cred(
                 "https://localhost/*",
@@ -361,10 +356,9 @@ async fn test_sigv4_mixed_with_header_credential() {
                 "RealSecret",
                 None,
             ),
-        ],
-        upstream.port(),
-    )
-    .await;
+        ])
+        .start()
+        .await;
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
 
     let fake_auth = fake_aws_auth("AKIAFAKE000000000000", "us-east-1", "sts");
@@ -400,20 +394,20 @@ async fn test_sigv4_mixed_with_header_credential() {
 async fn test_sigv4_no_match_passes_unchanged() {
     let t = test_report!("No match — request passes with original auth");
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start_reported(&t, &ca, echo_handler(), "echo handler").await;
-    let proxy = TestProxy::start_with_credentials(
-        &ca,
-        vec![rule("*", "https://localhost/*")],
+    let upstream = TestUpstream::builder(&ca, echo_handler())
+        .report(&t, "echo handler")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(&ca, vec![rule("*", "https://localhost/*")], upstream.port())
         // SigV4 credential for a different URL pattern
-        vec![aws_cred(
+        .credentials(vec![aws_cred(
             "https://other.amazonaws.com/*",
             "AKIAREAL123456789012",
             "RealSecret",
             None,
-        )],
-        upstream.port(),
-    )
-    .await;
+        )])
+        .start()
+        .await;
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
 
     let fake_auth = fake_aws_auth("AKIAFAKE000000000000", "us-east-1", "sts");
@@ -433,18 +427,18 @@ async fn test_sigv4_no_match_passes_unchanged() {
 async fn test_sigv4_backward_compat_header_credential() {
     let t = test_report!("Old-format header credential still works alongside AWS");
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start_reported(&t, &ca, echo_handler(), "echo handler").await;
-    let proxy = TestProxy::start_with_credentials(
-        &ca,
-        vec![rule("*", "https://localhost/*")],
-        vec![header_cred(
+    let upstream = TestUpstream::builder(&ca, echo_handler())
+        .report(&t, "echo handler")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(&ca, vec![rule("*", "https://localhost/*")], upstream.port())
+        .credentials(vec![header_cred(
             "https://localhost/*",
             "authorization",
             "Bearer old-format-token",
-        )],
-        upstream.port(),
-    )
-    .await;
+        )])
+        .start()
+        .await;
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
 
     let resp = client.get("https://localhost/test").await;

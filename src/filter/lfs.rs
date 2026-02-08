@@ -21,7 +21,7 @@ pub fn check_lfs_operation(body: &[u8], allowed_operations: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_report;
+    use pyloros_test_support::test_report;
 
     #[test]
     fn test_download_allowed_by_download() {

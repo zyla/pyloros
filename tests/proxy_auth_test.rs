@@ -24,17 +24,20 @@ async fn test_auth_correct_credentials_https() {
     let t = test_report!("Auth: correct credentials allow HTTPS request");
 
     let ca = TestCa::generate();
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, ok_handler("auth ok"), "returns 'auth ok'").await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("auth ok"))
+        .report(&t, "returns 'auth ok'")
+        .start()
+        .await;
 
-    let proxy = TestProxy::start_with_auth(
+    let proxy = TestProxy::builder(
         &ca,
         vec![common::rule("GET", "https://localhost/*")],
-        Some(("user".to_string(), "pass".to_string())),
         upstream.port(),
     )
+    .auth("user", "pass")
+    .report(&t)
+    .start()
     .await;
-    t.setup("Proxy with auth: user/pass");
 
     let client = ReportingClient::new_with_proxy_auth(&t, proxy.addr(), &ca, "user", "pass");
     let resp = client.get("https://localhost/test").await;
@@ -53,22 +56,20 @@ async fn test_auth_wrong_password_returns_407() {
     let t = test_report!("Auth: wrong password returns 407");
 
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start_reported(
-        &t,
-        &ca,
-        ok_handler("should not reach"),
-        "returns 'should not reach'",
-    )
-    .await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("should not reach"))
+        .report(&t, "returns 'should not reach'")
+        .start()
+        .await;
 
-    let proxy = TestProxy::start_with_auth(
+    let proxy = TestProxy::builder(
         &ca,
         vec![common::rule("GET", "https://localhost/*")],
-        Some(("user".to_string(), "pass".to_string())),
         upstream.port(),
     )
+    .auth("user", "pass")
+    .report(&t)
+    .start()
     .await;
-    t.setup("Proxy with auth: user/pass");
 
     let client = ReportingClient::new_with_proxy_auth(&t, proxy.addr(), &ca, "user", "wrongpass");
     let result = try_https_get(&client, "https://localhost/test").await;
@@ -91,22 +92,20 @@ async fn test_auth_no_credentials_returns_407() {
     let t = test_report!("Auth: no credentials returns 407");
 
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start_reported(
-        &t,
-        &ca,
-        ok_handler("should not reach"),
-        "returns 'should not reach'",
-    )
-    .await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("should not reach"))
+        .report(&t, "returns 'should not reach'")
+        .start()
+        .await;
 
-    let proxy = TestProxy::start_with_auth(
+    let proxy = TestProxy::builder(
         &ca,
         vec![common::rule("GET", "https://localhost/*")],
-        Some(("user".to_string(), "pass".to_string())),
         upstream.port(),
     )
+    .auth("user", "pass")
+    .report(&t)
+    .start()
     .await;
-    t.setup("Proxy with auth: user/pass");
 
     // Client without proxy auth
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
@@ -130,22 +129,20 @@ async fn test_auth_wrong_username_returns_407() {
     let t = test_report!("Auth: wrong username returns 407");
 
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start_reported(
-        &t,
-        &ca,
-        ok_handler("should not reach"),
-        "returns 'should not reach'",
-    )
-    .await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("should not reach"))
+        .report(&t, "returns 'should not reach'")
+        .start()
+        .await;
 
-    let proxy = TestProxy::start_with_auth(
+    let proxy = TestProxy::builder(
         &ca,
         vec![common::rule("GET", "https://localhost/*")],
-        Some(("user".to_string(), "pass".to_string())),
         upstream.port(),
     )
+    .auth("user", "pass")
+    .report(&t)
+    .start()
     .await;
-    t.setup("Proxy with auth: user/pass");
 
     let client = ReportingClient::new_with_proxy_auth(&t, proxy.addr(), &ca, "wronguser", "pass");
     let result = try_https_get(&client, "https://localhost/test").await;
@@ -168,17 +165,19 @@ async fn test_auth_disabled_allows_request() {
     let t = test_report!("Auth: disabled (no config) allows request");
 
     let ca = TestCa::generate();
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, ok_handler("no auth"), "returns 'no auth'").await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("no auth"))
+        .report(&t, "returns 'no auth'")
+        .start()
+        .await;
 
-    let proxy = TestProxy::start_with_auth(
+    let proxy = TestProxy::builder(
         &ca,
         vec![common::rule("GET", "https://localhost/*")],
-        None, // no auth
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
-    t.setup("Proxy without auth");
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
     let resp = client.get("https://localhost/test").await;
@@ -203,14 +202,15 @@ async fn test_auth_plain_http_correct_credentials() {
         .await;
 
     let ca = TestCa::generate();
-    let proxy = TestProxy::start_with_auth(
+    let proxy = TestProxy::builder(
         &ca,
         vec![common::rule("GET", "http://localhost/*")],
-        Some(("user".to_string(), "pass".to_string())),
         upstream.address().port(),
     )
+    .auth("user", "pass")
+    .report(&t)
+    .start()
     .await;
-    t.setup("Proxy with auth: user/pass (plain HTTP)");
 
     let client = ReportingClient::new_plain_with_proxy_auth(&t, proxy.addr(), "user", "pass");
     let url = format!("http://localhost:{}/test", upstream.address().port());
@@ -235,14 +235,15 @@ async fn test_auth_plain_http_no_credentials_returns_407() {
         .await;
 
     let ca = TestCa::generate();
-    let proxy = TestProxy::start_with_auth(
+    let proxy = TestProxy::builder(
         &ca,
         vec![common::rule("GET", "http://localhost/*")],
-        Some(("user".to_string(), "pass".to_string())),
         upstream.address().port(),
     )
+    .auth("user", "pass")
+    .report(&t)
+    .start()
     .await;
-    t.setup("Proxy with auth: user/pass (plain HTTP, no creds)");
 
     let client = ReportingClient::new_plain(&t, proxy.addr());
     let url = format!("http://localhost:{}/test", upstream.address().port());

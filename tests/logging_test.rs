@@ -15,8 +15,10 @@ async fn test_log_blocked_only() {
     let logs = LogCapture::new();
 
     let ca = TestCa::generate();
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, ok_handler("logged"), "returns 'logged'").await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("logged"))
+        .report(&t, "returns 'logged'")
+        .start()
+        .await;
 
     t.setup("Proxy with log_allowed=false, log_blocked=true");
     let mut config = Config::minimal(
@@ -68,8 +70,10 @@ async fn test_log_allowed_only() {
     let logs = LogCapture::new();
 
     let ca = TestCa::generate();
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, ok_handler("logged"), "returns 'logged'").await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("logged"))
+        .report(&t, "returns 'logged'")
+        .start()
+        .await;
 
     t.setup("Proxy with log_allowed=true, log_blocked=false");
     let mut config = Config::minimal(

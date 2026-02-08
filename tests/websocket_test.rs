@@ -101,11 +101,14 @@ async fn test_websocket_echo() {
     let t = test_report!("WebSocket echo through proxy");
 
     let ca = TestCa::generate();
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, ws_echo_handler(), "ws echo handler").await;
-    let proxy =
-        TestProxy::start_reported(&t, &ca, vec![ws_rule("wss://localhost/*")], upstream.port())
-            .await;
+    let upstream = TestUpstream::builder(&ca, ws_echo_handler())
+        .report(&t, "ws echo handler")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(&ca, vec![ws_rule("wss://localhost/*")], upstream.port())
+        .report(&t)
+        .start()
+        .await;
 
     let ws = ws_connect_reported(&t, proxy.addr(), &ca, "/echo").await;
     let mut ws = ReportingWebSocket::new(ws, &t);
@@ -130,17 +133,16 @@ async fn test_websocket_blocked_by_filter() {
     let t = test_report!("WebSocket blocked by filter returns 451");
 
     let ca = TestCa::generate();
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, ws_echo_handler(), "ws echo handler").await;
+    let upstream = TestUpstream::builder(&ca, ws_echo_handler())
+        .report(&t, "ws echo handler")
+        .start()
+        .await;
 
     // Only allow example.com, not localhost
-    let proxy = TestProxy::start_reported(
-        &t,
-        &ca,
-        vec![ws_rule("wss://example.com/*")],
-        upstream.port(),
-    )
-    .await;
+    let proxy = TestProxy::builder(&ca, vec![ws_rule("wss://example.com/*")], upstream.port())
+        .report(&t)
+        .start()
+        .await;
 
     // Low-level raw TCP/TLS handshake — intentionally bare t.action()
     t.action("TCP CONNECT + TLS handshake to localhost:443");
@@ -195,11 +197,14 @@ async fn test_websocket_multiple_messages() {
     let t = test_report!("WebSocket multiple messages echoed in order");
 
     let ca = TestCa::generate();
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, ws_echo_handler(), "ws echo handler").await;
-    let proxy =
-        TestProxy::start_reported(&t, &ca, vec![ws_rule("wss://localhost/*")], upstream.port())
-            .await;
+    let upstream = TestUpstream::builder(&ca, ws_echo_handler())
+        .report(&t, "ws echo handler")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(&ca, vec![ws_rule("wss://localhost/*")], upstream.port())
+        .report(&t)
+        .start()
+        .await;
 
     let ws = ws_connect_reported(&t, proxy.addr(), &ca, "/multi").await;
     let mut ws = ReportingWebSocket::new(ws, &t);
@@ -229,11 +234,14 @@ async fn test_websocket_binary_message() {
     let t = test_report!("WebSocket binary message integrity");
 
     let ca = TestCa::generate();
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, ws_echo_handler(), "ws echo handler").await;
-    let proxy =
-        TestProxy::start_reported(&t, &ca, vec![ws_rule("wss://localhost/*")], upstream.port())
-            .await;
+    let upstream = TestUpstream::builder(&ca, ws_echo_handler())
+        .report(&t, "ws echo handler")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(&ca, vec![ws_rule("wss://localhost/*")], upstream.port())
+        .report(&t)
+        .start()
+        .await;
 
     let ws = ws_connect_reported(&t, proxy.addr(), &ca, "/binary").await;
     let mut ws = ReportingWebSocket::new(ws, &t);
@@ -270,16 +278,14 @@ async fn test_websocket_upstream_rejects() {
     let t = test_report!("WebSocket upstream rejection forwarded");
 
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start_reported(
-        &t,
-        &ca,
-        ok_handler("not a websocket server"),
-        "returns 200 (not ws)",
-    )
-    .await;
-    let proxy =
-        TestProxy::start_reported(&t, &ca, vec![ws_rule("wss://localhost/*")], upstream.port())
-            .await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("not a websocket server"))
+        .report(&t, "returns 200 (not ws)")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(&ca, vec![ws_rule("wss://localhost/*")], upstream.port())
+        .report(&t)
+        .start()
+        .await;
 
     // Low-level raw TCP/TLS handshake — intentionally bare t.action()
     t.action("TCP CONNECT + TLS handshake to localhost:443");
@@ -321,11 +327,14 @@ async fn test_websocket_ping_pong() {
     let t = test_report!("WebSocket ping/pong control frames");
 
     let ca = TestCa::generate();
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, ws_echo_handler(), "ws echo handler").await;
-    let proxy =
-        TestProxy::start_reported(&t, &ca, vec![ws_rule("wss://localhost/*")], upstream.port())
-            .await;
+    let upstream = TestUpstream::builder(&ca, ws_echo_handler())
+        .report(&t, "ws echo handler")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(&ca, vec![ws_rule("wss://localhost/*")], upstream.port())
+        .report(&t)
+        .start()
+        .await;
 
     let ws = ws_connect_reported(&t, proxy.addr(), &ca, "/ping").await;
     let mut ws = ReportingWebSocket::new(ws, &t);

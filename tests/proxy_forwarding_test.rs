@@ -15,13 +15,17 @@ async fn test_request_headers_forwarded() {
     let t = test_report!("Request headers forwarded to upstream");
 
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start_reported(&t, &ca, echo_handler(), "echo handler").await;
-    let proxy = TestProxy::start_reported(
-        &t,
+    let upstream = TestUpstream::builder(&ca, echo_handler())
+        .report(&t, "echo handler")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(
         &ca,
         vec![rule("GET", "https://localhost/*")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
@@ -46,13 +50,17 @@ async fn test_response_headers_forwarded() {
     let t = test_report!("Response headers forwarded to client");
 
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start_reported(&t, &ca, echo_handler(), "echo handler").await;
-    let proxy = TestProxy::start_reported(
-        &t,
+    let upstream = TestUpstream::builder(&ca, echo_handler())
+        .report(&t, "echo handler")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(
         &ca,
         vec![rule("GET", "https://localhost/*")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
@@ -78,15 +86,16 @@ async fn test_upstream_down_returns_502() {
 
     let ca = TestCa::generate();
     // Start and immediately shutdown the upstream so its port is dead
-    let upstream = TestUpstream::start(&ca, ok_handler("nope")).await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("nope")).start().await;
     let dead_port = upstream.port();
     upstream.shutdown();
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     t.setup("Upstream: shut down (dead port)");
-    let proxy =
-        TestProxy::start_reported(&t, &ca, vec![rule("GET", "https://localhost/*")], dead_port)
-            .await;
+    let proxy = TestProxy::builder(&ca, vec![rule("GET", "https://localhost/*")], dead_port)
+        .report(&t)
+        .start()
+        .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
     let resp = client.get("https://localhost/gone").await;
@@ -119,13 +128,17 @@ async fn test_large_response_body() {
         })
     });
 
-    let upstream = TestUpstream::start_reported(&t, &ca, handler, "returns 100KB body").await;
-    let proxy = TestProxy::start_reported(
-        &t,
+    let upstream = TestUpstream::builder(&ca, handler)
+        .report(&t, "returns 100KB body")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(
         &ca,
         vec![rule("GET", "https://localhost/*")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
@@ -155,20 +168,14 @@ async fn test_connect_non_443_port_blocked() {
     let t = test_report!("CONNECT to non-443 port blocked");
 
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start_reported(
-        &t,
-        &ca,
-        ok_handler("should not reach"),
-        "returns 'should not reach'",
-    )
-    .await;
-    let proxy = TestProxy::start_reported(
-        &t,
-        &ca,
-        vec![rule("*", "https://localhost/*")],
-        upstream.port(),
-    )
-    .await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("should not reach"))
+        .report(&t, "returns 'should not reach'")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(&ca, vec![rule("*", "https://localhost/*")], upstream.port())
+        .report(&t)
+        .start()
+        .await;
 
     // Raw TCP connect to proxy, send CONNECT with non-443 port
     t.action("Raw TCP CONNECT localhost:8080 (non-443 port)");

@@ -32,15 +32,18 @@ async fn test_lfs_download_allowed_by_fetch_rule() {
     let ca = TestCa::generate();
     t.setup("Generated test CA");
 
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, ok_handler("lfs-batch-ok"), "LFS batch mock").await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("lfs-batch-ok"))
+        .report(&t, "LFS batch mock")
+        .start()
+        .await;
 
-    let proxy = TestProxy::start_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![git_rule("fetch", "https://localhost/org/repo")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
@@ -68,15 +71,18 @@ async fn test_lfs_upload_blocked_by_fetch_rule() {
     let ca = TestCa::generate();
     t.setup("Generated test CA");
 
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, ok_handler("should-not-reach"), "LFS mock").await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("should-not-reach"))
+        .report(&t, "LFS mock")
+        .start()
+        .await;
 
-    let proxy = TestProxy::start_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![git_rule("fetch", "https://localhost/org/repo")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
@@ -102,15 +108,18 @@ async fn test_lfs_upload_allowed_by_push_rule() {
     let ca = TestCa::generate();
     t.setup("Generated test CA");
 
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, ok_handler("lfs-upload-ok"), "LFS mock").await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("lfs-upload-ok"))
+        .report(&t, "LFS mock")
+        .start()
+        .await;
 
-    let proxy = TestProxy::start_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![git_rule("push", "https://localhost/org/repo")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
@@ -136,15 +145,18 @@ async fn test_lfs_download_blocked_by_push_rule() {
     let ca = TestCa::generate();
     t.setup("Generated test CA");
 
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, ok_handler("should-not-reach"), "LFS mock").await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("should-not-reach"))
+        .report(&t, "LFS mock")
+        .start()
+        .await;
 
-    let proxy = TestProxy::start_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![git_rule("push", "https://localhost/org/repo")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
@@ -170,14 +182,18 @@ async fn test_lfs_both_ops_allowed_by_star_rule() {
     let ca = TestCa::generate();
     t.setup("Generated test CA");
 
-    let upstream = TestUpstream::start_reported(&t, &ca, ok_handler("lfs-ok"), "LFS mock").await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("lfs-ok"))
+        .report(&t, "LFS mock")
+        .start()
+        .await;
 
-    let proxy = TestProxy::start_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![git_rule("*", "https://localhost/org/repo")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
@@ -214,16 +230,19 @@ async fn test_lfs_blocked_on_plain_http() {
     let ca = TestCa::generate();
     t.setup("Generated test CA");
 
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, ok_handler("should-not-reach"), "LFS mock").await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("should-not-reach"))
+        .report(&t, "LFS mock")
+        .start()
+        .await;
 
     // Use an http:// URL in the rule so it matches plain HTTP requests
-    let proxy = TestProxy::start_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![git_rule("*", "http://localhost/org/repo")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new_plain(&t, proxy.addr());
@@ -249,15 +268,18 @@ async fn test_lfs_invalid_json_blocked() {
     let ca = TestCa::generate();
     t.setup("Generated test CA");
 
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, ok_handler("should-not-reach"), "LFS mock").await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("should-not-reach"))
+        .report(&t, "LFS mock")
+        .start()
+        .await;
 
-    let proxy = TestProxy::start_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![git_rule("*", "https://localhost/org/repo")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
@@ -283,15 +305,18 @@ async fn test_lfs_missing_operation_blocked() {
     let ca = TestCa::generate();
     t.setup("Generated test CA");
 
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, ok_handler("should-not-reach"), "LFS mock").await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("should-not-reach"))
+        .report(&t, "LFS mock")
+        .start()
+        .await;
 
-    let proxy = TestProxy::start_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![git_rule("*", "https://localhost/org/repo")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
@@ -317,15 +342,18 @@ async fn test_lfs_get_to_batch_blocked() {
     let ca = TestCa::generate();
     t.setup("Generated test CA");
 
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, ok_handler("should-not-reach"), "LFS mock").await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("should-not-reach"))
+        .report(&t, "LFS mock")
+        .start()
+        .await;
 
-    let proxy = TestProxy::start_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![git_rule("*", "https://localhost/org/repo")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
@@ -346,10 +374,12 @@ async fn test_lfs_branch_restricted_push_allows_lfs_upload() {
     let ca = TestCa::generate();
     t.setup("Generated test CA");
 
-    let upstream = TestUpstream::start_reported(&t, &ca, ok_handler("lfs-ok"), "LFS mock").await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("lfs-ok"))
+        .report(&t, "LFS mock")
+        .start()
+        .await;
 
-    let proxy = TestProxy::start_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![git_rule_with_branches(
             "push",
@@ -358,6 +388,8 @@ async fn test_lfs_branch_restricted_push_allows_lfs_upload() {
         )],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
@@ -383,10 +415,12 @@ async fn test_lfs_merged_scan_fetch_plus_push() {
     let ca = TestCa::generate();
     t.setup("Generated test CA");
 
-    let upstream = TestUpstream::start_reported(&t, &ca, ok_handler("lfs-ok"), "LFS mock").await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("lfs-ok"))
+        .report(&t, "LFS mock")
+        .start()
+        .await;
 
-    let proxy = TestProxy::start_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![
             git_rule("fetch", "https://localhost/org/repo"),
@@ -394,6 +428,8 @@ async fn test_lfs_merged_scan_fetch_plus_push() {
         ],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
@@ -430,17 +466,19 @@ async fn test_lfs_transfer_url_requires_separate_rule() {
     let ca = TestCa::generate();
     t.setup("Generated test CA");
 
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, ok_handler("object-data"), "LFS object store mock")
-            .await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("object-data"))
+        .report(&t, "LFS object store mock")
+        .start()
+        .await;
 
     // Only git rule — no separate rule for /lfs/objects/*
-    let proxy = TestProxy::start_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![git_rule("fetch", "https://localhost/org/repo")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
@@ -462,12 +500,12 @@ async fn test_lfs_transfer_url_allowed_with_separate_rule() {
     let ca = TestCa::generate();
     t.setup("Generated test CA");
 
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, ok_handler("object-data"), "LFS object store mock")
-            .await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("object-data"))
+        .report(&t, "LFS object store mock")
+        .start()
+        .await;
 
-    let proxy = TestProxy::start_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![
             git_rule("fetch", "https://localhost/org/repo"),
@@ -475,6 +513,8 @@ async fn test_lfs_transfer_url_allowed_with_separate_rule() {
         ],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
@@ -521,25 +561,26 @@ async fn test_lfs_clone_downloads_content() {
 
     let request_log: RequestLog = Arc::new(Mutex::new(Vec::new()));
 
-    let upstream = TestUpstream::start_for_host_reported(
-        &t,
+    let upstream = TestUpstream::builder(
         &ca,
-        LFS_TEST_HOST,
         lfs_git_handler(backend_path, repos_dir, request_log.clone(), lfs_store),
-        "git http-backend + LFS mock",
     )
+    .hostname(LFS_TEST_HOST)
+    .report(&t, "git http-backend + LFS mock")
+    .start()
     .await;
 
-    let proxy = TestProxy::start_with_host_override_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![
             git_rule("fetch", &format!("https://{}/*", LFS_TEST_HOST)),
             rule("GET", &format!("https://{}/*/lfs/objects/*", LFS_TEST_HOST)),
         ],
         upstream.port(),
-        "127.0.0.1",
     )
+    .upstream_host("127.0.0.1")
+    .report(&t)
+    .start()
     .await;
 
     let clone_dir = tmp.path().join("cloned");
@@ -615,22 +656,21 @@ async fn test_lfs_push_uploads_content() {
 
     let request_log: RequestLog = Arc::new(Mutex::new(Vec::new()));
 
-    let upstream = TestUpstream::start_for_host_reported(
-        &t,
+    let upstream = TestUpstream::builder(
         &ca,
-        LFS_TEST_HOST,
         lfs_git_handler(
             backend_path,
             repos_dir,
             request_log.clone(),
             lfs_store.clone(),
         ),
-        "git http-backend + LFS mock",
     )
+    .hostname(LFS_TEST_HOST)
+    .report(&t, "git http-backend + LFS mock")
+    .start()
     .await;
 
-    let proxy = TestProxy::start_with_host_override_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![
             git_rule("fetch", &format!("https://{}/*", LFS_TEST_HOST)),
@@ -639,8 +679,10 @@ async fn test_lfs_push_uploads_content() {
             rule("PUT", &format!("https://{}/*/lfs/objects/*", LFS_TEST_HOST)),
         ],
         upstream.port(),
-        "127.0.0.1",
     )
+    .upstream_host("127.0.0.1")
+    .report(&t)
+    .start()
     .await;
 
     let proxy_url = format!("http://127.0.0.1:{}", proxy.addr().port());
@@ -744,23 +786,24 @@ async fn test_lfs_clone_blocked_without_fetch_rule() {
 
     let request_log: RequestLog = Arc::new(Mutex::new(Vec::new()));
 
-    let upstream = TestUpstream::start_for_host_reported(
-        &t,
+    let upstream = TestUpstream::builder(
         &ca,
-        LFS_TEST_HOST,
         lfs_git_handler(backend_path, repos_dir, request_log.clone(), lfs_store),
-        "git http-backend + LFS mock",
     )
+    .hostname(LFS_TEST_HOST)
+    .report(&t, "git http-backend + LFS mock")
+    .start()
     .await;
 
     // Push-only rule: no fetch endpoints, no LFS download
-    let proxy = TestProxy::start_with_host_override_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![git_rule("push", &format!("https://{}/*", LFS_TEST_HOST))],
         upstream.port(),
-        "127.0.0.1",
     )
+    .upstream_host("127.0.0.1")
+    .report(&t)
+    .start()
     .await;
 
     let clone_dir = tmp.path().join("cloned");

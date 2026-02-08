@@ -1,15 +1,11 @@
-//! Test report infrastructure for unit tests.
-//!
-//! This module provides TestReport for recording test steps and writing
-//! structured report files consumed by the test-report generator tool.
-//! Only compiled during test builds (`#[cfg(test)]`).
+//! Shared test report infrastructure for unit and integration tests.
 
 use std::fmt::{Debug, Display};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
 /// Auto-detect the test name from the calling function.
-/// Works for both sync and async test functions.
+/// Must be called from the test function body (not a helper).
 #[macro_export]
 macro_rules! test_report {
     ($title:expr) => {{
@@ -22,7 +18,7 @@ macro_rules! test_report {
         let name = &name[..name.len() - 3];
         // In async fns, the path ends with "::{{closure}}" — strip that too
         let name = name.strip_suffix("::{{closure}}").unwrap_or(name);
-        $crate::test_support::TestReport::new(name, $title, file!(), line!())
+        $crate::TestReport::new(name, $title, file!(), line!())
     }};
 }
 
@@ -71,7 +67,6 @@ impl TestReport {
     }
 
     /// Mark this test as skipped with a reason. Call before returning early.
-    #[allow(dead_code)]
     pub fn skip(&self, reason: impl Display) {
         *self.skipped.lock().unwrap() = Some(reason.to_string());
     }
@@ -86,7 +81,6 @@ impl TestReport {
         }
     }
 
-    #[allow(dead_code)]
     pub fn setup(&self, msg: impl Display) {
         self.steps
             .lock()
@@ -94,7 +88,6 @@ impl TestReport {
             .push(Step::Setup(msg.to_string()));
     }
 
-    #[allow(dead_code)]
     pub fn action(&self, msg: impl Display) {
         self.steps
             .lock()
@@ -102,7 +95,6 @@ impl TestReport {
             .push(Step::Action(msg.to_string()));
     }
 
-    #[allow(dead_code)]
     pub fn output(&self, label: &str, text: &str) {
         self.steps.lock().unwrap().push(Step::Output {
             label: label.to_string(),
@@ -127,7 +119,6 @@ impl TestReport {
         assert_eq!(actual, expected, "{}", label);
     }
 
-    #[allow(dead_code)]
     pub fn assert_contains(&self, label: &str, haystack: &str, needle: &str) {
         let pass = haystack.contains(needle);
         let haystack_s = Self::truncate_for_display(&format!("{:?}", haystack), 1000);
@@ -145,7 +136,33 @@ impl TestReport {
         );
     }
 
-    #[allow(dead_code)]
+    pub fn assert_not_contains(&self, label: &str, haystack: &str, needle: &str) {
+        let pass = !haystack.contains(needle);
+        let haystack_s = Self::truncate_for_display(&format!("{:?}", haystack), 1000);
+        let needle_s = Self::truncate_for_display(&format!("{:?}", needle), 1000);
+        let msg = format!("{}: {} does not contain {}", label, haystack_s, needle_s);
+        self.steps.lock().unwrap().push(if pass {
+            Step::AssertPass(msg)
+        } else {
+            Step::AssertFail(msg.clone())
+        });
+        assert!(
+            pass,
+            "{}: {:?} should not contain {:?}",
+            label, haystack, needle
+        );
+    }
+
+    pub fn assert_true(&self, label: &str, value: bool) {
+        let msg = format!("{}: `{}`", label, value);
+        self.steps.lock().unwrap().push(if value {
+            Step::AssertPass(msg)
+        } else {
+            Step::AssertFail(msg.clone())
+        });
+        assert!(value, "{}", label);
+    }
+
     pub fn assert_starts_with(&self, label: &str, value: &str, prefix: &str) {
         let pass = value.starts_with(prefix);
         let value_s = Self::truncate_for_display(&format!("{:?}", value), 1000);
@@ -161,16 +178,6 @@ impl TestReport {
             "{}: {:?} does not start with {:?}",
             label, value, prefix
         );
-    }
-
-    pub fn assert_true(&self, label: &str, value: bool) {
-        let msg = format!("{}: `{}`", label, value);
-        self.steps.lock().unwrap().push(if value {
-            Step::AssertPass(msg)
-        } else {
-            Step::AssertFail(msg.clone())
-        });
-        assert!(value, "{}", label);
     }
 
     /// Extract the group name (test file module) from the full path.
@@ -215,7 +222,7 @@ impl TestReport {
             lines.push(step.to_report_line());
         }
         lines.push(format!("RESULT: {}", result));
-        lines.push(String::new());
+        lines.push(String::new()); // trailing newline
 
         let sanitized = self.full_path.replace("::", "__");
         let path = dir.join(format!("{}.txt", sanitized));

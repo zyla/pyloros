@@ -451,7 +451,22 @@ pub fn resolve_credential_value(value: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_report;
+    use pyloros_test_support::test_report;
+
+    fn assert_config_rejects(title: &str, toml_input: &str, expected_substr: Option<&str>) {
+        let t = pyloros_test_support::TestReport::new(
+            &format!("pyloros::config::tests::{}", title.replace(' ', "_")),
+            title,
+            file!(),
+            line!(),
+        );
+        t.setup(format!("Parse TOML config:\n```\n{}\n```", toml_input));
+        let result = Config::parse(toml_input);
+        t.assert_true("should be error", result.is_err());
+        if let Some(needle) = expected_substr {
+            t.assert_contains("error message", &result.unwrap_err().to_string(), needle);
+        }
+    }
 
     #[test]
     fn test_parse_minimal_config() {
@@ -659,9 +674,7 @@ bind_address = "127.0.0.1:8080"
 
     #[test]
     fn test_invalid_toml() {
-        let t = test_report!("Invalid TOML rejected");
-        let result = Config::parse("this is not valid toml [[[");
-        t.assert_true("parse error", result.is_err());
+        assert_config_rejects("Invalid TOML rejected", "this is not valid toml [[[", None);
     }
 
     #[test]
@@ -711,93 +724,56 @@ url = "https://github.com/*"
 
     #[test]
     fn test_git_rule_validation_both_method_and_git() {
-        let t = test_report!("Reject rule with both method and git");
-        let toml = r#"
-[[rules]]
-method = "GET"
-git = "fetch"
-url = "https://example.com/*"
-"#;
-        let result = Config::parse(toml);
-        t.assert_true("parse error", result.is_err());
-        let err = result.unwrap_err().to_string();
-        t.assert_contains("error mentions both", &err, "both");
+        assert_config_rejects(
+            "Reject rule with both method and git",
+            "[[rules]]\nmethod = \"GET\"\ngit = \"fetch\"\nurl = \"https://example.com/*\"",
+            Some("both"),
+        );
     }
 
     #[test]
     fn test_git_rule_validation_neither_method_nor_git() {
-        let t = test_report!("Reject rule with neither method nor git");
-        let toml = r#"
-[[rules]]
-url = "https://example.com/*"
-"#;
-        let result = Config::parse(toml);
-        t.assert_true("parse error", result.is_err());
-        let err = result.unwrap_err().to_string();
-        t.assert_contains("error mentions either", &err, "either");
+        assert_config_rejects(
+            "Reject rule with neither method nor git",
+            "[[rules]]\nurl = \"https://example.com/*\"",
+            Some("either"),
+        );
     }
 
     #[test]
     fn test_git_rule_validation_websocket_with_git() {
-        let t = test_report!("Reject rule with websocket and git");
-        let toml = r#"
-[[rules]]
-git = "fetch"
-url = "https://example.com/*"
-websocket = true
-"#;
-        let result = Config::parse(toml);
-        t.assert_true("parse error", result.is_err());
-        let err = result.unwrap_err().to_string();
-        t.assert_contains(
-            "error mentions mutually exclusive",
-            &err,
-            "mutually exclusive",
+        assert_config_rejects(
+            "Reject rule with websocket and git",
+            "[[rules]]\ngit = \"fetch\"\nurl = \"https://example.com/*\"\nwebsocket = true",
+            Some("mutually exclusive"),
         );
     }
 
     #[test]
     fn test_git_rule_validation_invalid_git_value() {
-        let t = test_report!("Reject invalid git operation value");
-        let toml = r#"
-[[rules]]
-git = "clone"
-url = "https://example.com/*"
-"#;
-        let result = Config::parse(toml);
-        t.assert_true("parse error", result.is_err());
-        let err = result.unwrap_err().to_string();
-        t.assert_contains("error mentions invalid", &err, "invalid");
+        assert_config_rejects(
+            "Reject invalid git operation value",
+            "[[rules]]\ngit = \"clone\"\nurl = \"https://example.com/*\"",
+            Some("invalid"),
+        );
     }
 
     #[test]
     fn test_git_rule_validation_branches_with_fetch() {
-        let t = test_report!("Reject branches on fetch-only rule");
-        let toml = r#"
-[[rules]]
-git = "fetch"
-url = "https://example.com/*"
-branches = ["main"]
-"#;
-        let result = Config::parse(toml);
-        t.assert_true("parse error", result.is_err());
-        let err = result.unwrap_err().to_string();
-        t.assert_contains("error mentions branches", &err, "branches");
+        assert_config_rejects(
+            "Reject branches on fetch-only rule",
+            "[[rules]]\ngit = \"fetch\"\nurl = \"https://example.com/*\"\nbranches = [\"main\"]",
+            Some("branches"),
+        );
     }
 
     #[test]
     fn test_git_rule_validation_branches_on_http_rule() {
-        let t = test_report!("Reject branches on HTTP rule");
-        let toml = r#"
-[[rules]]
-method = "POST"
-url = "https://example.com/*"
-branches = ["main"]
-"#;
-        let result = Config::parse(toml);
-        t.assert_true("parse error", result.is_err());
-        let err = result.unwrap_err().to_string();
-        t.assert_contains("error mentions git rules", &err, "git rules");
+        assert_config_rejects(
+            "Reject branches on HTTP rule",
+            "[[rules]]\nmethod = \"POST\"\nurl = \"https://example.com/*\"\nbranches = [\"main\"]",
+            Some("git rules"),
+        );
     }
 
     // --- Credential config tests ---
@@ -952,73 +928,47 @@ secret_access_key = "SECRET"
 
     #[test]
     fn test_credential_reject_empty_header() {
-        let t = test_report!("Reject credential with empty header name");
-        let toml = r#"
-[[credentials]]
-url = "https://api.example.com/*"
-header = ""
-value = "secret"
-"#;
-        let result = Config::parse(toml);
-        t.assert_true("parse error", result.is_err());
-        let err = result.unwrap_err().to_string();
-        t.assert_contains("error mentions header", &err, "header");
+        assert_config_rejects(
+            "Reject credential with empty header name",
+            "[[credentials]]\nurl = \"https://api.example.com/*\"\nheader = \"\"\nvalue = \"secret\"",
+            Some("header"),
+        );
     }
 
     #[test]
     fn test_credential_reject_invalid_url_pattern() {
-        let t = test_report!("Reject credential with invalid URL pattern");
-        let toml = r#"
-[[credentials]]
-url = "not-a-url"
-header = "x-api-key"
-value = "secret"
-"#;
-        let result = Config::parse(toml);
-        t.assert_true("parse error", result.is_err());
-        let err = result.unwrap_err().to_string();
-        t.assert_contains("error mentions URL pattern", &err, "URL pattern");
+        assert_config_rejects(
+            "Reject credential with invalid URL pattern",
+            "[[credentials]]\nurl = \"not-a-url\"\nheader = \"x-api-key\"\nvalue = \"secret\"",
+            Some("URL pattern"),
+        );
     }
 
     #[test]
     fn test_credential_reject_unknown_type() {
-        let t = test_report!("Reject credential with unknown type");
-        let toml = r#"
-[[credentials]]
-type = "oauth2"
-url = "https://api.example.com/*"
-"#;
-        let result = Config::parse(toml);
-        t.assert_true("parse error", result.is_err());
+        assert_config_rejects(
+            "Reject credential with unknown type",
+            "[[credentials]]\ntype = \"oauth2\"\nurl = \"https://api.example.com/*\"",
+            None,
+        );
     }
 
     #[test]
     fn test_credential_reject_aws_empty_access_key() {
-        let t = test_report!("Reject aws-sigv4 credential with empty access_key_id");
-        let toml = r#"
-[[credentials]]
-type = "aws-sigv4"
-url = "https://*.amazonaws.com/*"
-access_key_id = ""
-secret_access_key = "SECRET"
-"#;
-        let result = Config::parse(toml);
-        t.assert_true("parse error", result.is_err());
-        let err = result.unwrap_err().to_string();
-        t.assert_contains("mentions access_key_id", &err, "access_key_id");
+        assert_config_rejects(
+            "Reject aws-sigv4 credential with empty access_key_id",
+            "[[credentials]]\ntype = \"aws-sigv4\"\nurl = \"https://*.amazonaws.com/*\"\naccess_key_id = \"\"\nsecret_access_key = \"SECRET\"",
+            Some("access_key_id"),
+        );
     }
 
     #[test]
     fn test_credential_reject_aws_missing_secret() {
-        let t = test_report!("Reject aws-sigv4 credential missing secret_access_key");
-        let toml = r#"
-[[credentials]]
-type = "aws-sigv4"
-url = "https://*.amazonaws.com/*"
-access_key_id = "AKID"
-"#;
-        let result = Config::parse(toml);
-        t.assert_true("parse error", result.is_err());
+        assert_config_rejects(
+            "Reject aws-sigv4 credential missing secret_access_key",
+            "[[credentials]]\ntype = \"aws-sigv4\"\nurl = \"https://*.amazonaws.com/*\"\naccess_key_id = \"AKID\"",
+            None,
+        );
     }
 
     #[test]
