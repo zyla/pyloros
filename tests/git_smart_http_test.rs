@@ -347,6 +347,8 @@ async fn test_git_push_through_proxy() {
     t.assert_eq("git clone exit code", &output.status.code().unwrap(), &0);
 
     // Step 2: Make a new commit in the cloned repo
+    run_git(&["config", "user.email", "test@test.com"], &clone_dir);
+    run_git(&["config", "user.name", "Test User"], &clone_dir);
     std::fs::write(clone_dir.join("newfile.txt"), "pushed content\n").unwrap();
     run_git(&["add", "newfile.txt"], &clone_dir);
     run_git(&["commit", "-m", "Add newfile"], &clone_dir);
