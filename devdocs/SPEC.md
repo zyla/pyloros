@@ -102,12 +102,18 @@ websocket = true
 
 - Unit tests where it makes sense
 - End-to-end integration tests covering all features: filtering rules, plain HTTP forwarding, HTTPS (MITM), HTTP/2, WebSocket
-- Binary-level smoke tests that spawn the real binary and drive it with `curl`
-- Live API tests against production servers (skipped when credentials unavailable)
 - CLI integration tests for all subcommands (`run`, `generate-ca`, `validate-config`)
 - Tests run in GitHub Actions; coverage is reported
 
-See `DECISIONS.md` for implementation details (test architecture, port override mechanism).
+See `DECISIONS.md` for implementation details (E2E test architecture, port override mechanism).
+
+### Binary-Level Tests
+
+Binary-level smoke tests spawn the actual `redlimitador` binary and drive it with `curl`, configured via `HTTPS_PROXY` — the same mechanism real clients use. They verify end-to-end behavior including config parsing, CLI argument handling, and process lifecycle.
+
+### Live API Tests
+
+Binary-level tests that send real requests to external APIs (e.g. `api.anthropic.com`) through the proxy, verifying the full MITM TLS pipeline against production servers. These tests require the `claude` CLI to be installed and authenticated, and are skipped when either is unavailable (e.g. in CI).
 
 ### Test Report Generation
 
