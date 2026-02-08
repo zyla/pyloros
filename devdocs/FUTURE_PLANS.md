@@ -11,5 +11,3 @@ Not in SPEC because too vaguely worded.
   - Likely approach: proxy maintains a local clone, applies the incoming pack, runs `git diff` to identify changed files, allows/blocks, then forwards
   - Heavy feature: disk I/O, extra network round-trips, git subprocess management — should be gated behind explicit config
   - Build separately from branch-level git rules (which are lightweight pkt-line inspection)
-
-- ~~Credential masking~~ → Implemented as "Credential Injection" in SPEC.md
