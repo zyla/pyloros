@@ -1,5 +1,6 @@
 [workspace]
 members = [".", "crates/test-support"]
+exclude = ["tools/test-report"]
 
 [package]
 name = "pyloros"
