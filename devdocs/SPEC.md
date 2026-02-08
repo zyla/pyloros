@@ -29,7 +29,7 @@ The intended deployment is one proxy per VM/container running an AI agent. All o
 - Method `*` matches any HTTP method
 - Example: `https://*.github.com/api/*` matches `https://foo.github.com/api/v1/repos`
 
-### Git Rules (planned)
+### Git Rules
 
 Git-specific rules provide a high-level way to control git smart HTTP operations (clone, fetch, push) without requiring users to understand the underlying protocol endpoints.
 
@@ -55,13 +55,13 @@ url = "https://github.com/*"
 
 #### `git` field values
 
-| Value   | Operations allowed   | Smart HTTP endpoints matched                          |
-|---------|---------------------|-------------------------------------------------------|
-| `fetch` | clone, fetch, pull  | `GET .../info/refs?service=git-upload-pack`, `POST .../git-upload-pack` |
-| `push`  | push                | `GET .../info/refs?service=git-receive-pack`, `POST .../git-receive-pack` |
-| `*`     | all                 | all four endpoints above                              |
+| Value   | Operations allowed   |
+|---------|---------------------|
+| `fetch` | clone, fetch, pull  |
+| `push`  | push                |
+| `*`     | all                 |
 
-The `url` is the repo base URL (what you'd pass to `git clone`). The proxy appends the git smart HTTP suffixes internally.
+The `url` is the repo base URL (what you'd pass to `git clone`).
 
 #### Branch restriction
 
@@ -72,18 +72,7 @@ The optional `branches` field restricts which refs a push can target. It is only
 - Omitting `branches` means any ref is allowed.
 - If a push updates multiple refs and **any** ref is disallowed, the **entire push** is blocked.
 
-Branch restriction works by inspecting the pkt-line commands at the start of the `git-receive-pack` POST request body. These are plaintext lines before the binary pack data, so inspection is lightweight.
-
-#### Compilation
-
-A git rule is syntactic sugar. At rule compilation time, `git = "fetch", url = "https://github.com/org/*"` expands into internal matchers equivalent to:
-
-```
-GET  https://github.com/org/*/info/refs?service=git-upload-pack
-POST https://github.com/org/*/git-upload-pack
-```
-
-For push rules with `branches`, the URL matchers are the same but the `git-receive-pack` POST matcher additionally inspects the request body to extract ref names and check them against the branch patterns.
+See `DECISIONS.md` for implementation details (smart HTTP endpoint mapping, pkt-line inspection, compilation model).
 
 ### Protocol Support
 - HTTP/1.1
@@ -153,7 +142,7 @@ method = "GET"
 url = "wss://realtime.example.com/socket"
 websocket = true
 
-# Git-specific rules (planned)
+# Git-specific rules
 [[rules]]
 git = "fetch"
 url = "https://github.com/myorg/*"
