@@ -10,17 +10,49 @@ The intended deployment is **one proxy per VM or container** running an AI agent
 
 Blocked requests receive HTTP 451 (Unavailable For Legal Reasons).
 
-## Quick Start
+## Installation
 
-### 1. Build
+### Pre-built binary (Linux x86_64)
+
+Download the latest statically-linked binary from [GitHub Releases](https://github.com/zyla/redlimitador/releases/latest):
 
 ```bash
+curl -sL https://github.com/zyla/redlimitador/releases/latest/download/redlimitador-$(curl -sL https://api.github.com/repos/zyla/redlimitador/releases/latest | grep tag_name | cut -d '"' -f4)-x86_64-unknown-linux-musl.tar.gz | tar xz
+sudo mv redlimitador-*/redlimitador /usr/local/bin/
+```
+
+Or download a specific version:
+
+```bash
+VERSION=v0.1.0
+curl -sL https://github.com/zyla/redlimitador/releases/download/${VERSION}/redlimitador-${VERSION}-x86_64-unknown-linux-musl.tar.gz | tar xz
+sudo mv redlimitador-${VERSION}-x86_64-unknown-linux-musl/redlimitador /usr/local/bin/
+```
+
+### Latest development build
+
+A rolling pre-release is built from `main` on every push:
+
+```bash
+curl -sL https://github.com/zyla/redlimitador/releases/download/latest/redlimitador-latest-x86_64-unknown-linux-musl.tar.gz | tar xz
+sudo mv redlimitador-latest-x86_64-unknown-linux-musl/redlimitador /usr/local/bin/
+```
+
+### Building from source
+
+Prerequisites: [Rust](https://www.rust-lang.org/tools/install) (stable toolchain).
+
+```bash
+git clone https://github.com/zyla/redlimitador.git
+cd redlimitador
 cargo build --release
 ```
 
-The binary is at `target/release/redlimitador`.
+The compiled binary is at `target/release/redlimitador`.
 
-### 2. Generate a CA certificate
+## Quick Start
+
+### 1. Generate a CA certificate
 
 ```bash
 redlimitador generate-ca --out ./certs/
@@ -28,7 +60,7 @@ redlimitador generate-ca --out ./certs/
 
 This creates `certs/ca.crt` and `certs/ca.key`.
 
-### 3. Trust the CA
+### 2. Trust the CA
 
 On Ubuntu/Debian:
 
@@ -37,7 +69,7 @@ sudo cp certs/ca.crt /usr/local/share/ca-certificates/redlimitador.crt
 sudo update-ca-certificates
 ```
 
-### 4. Create a configuration file
+### 3. Create a configuration file
 
 ```toml
 [proxy]
@@ -62,20 +94,20 @@ url = "https://raw.githubusercontent.com/*"
 
 See [`examples/basic_config.toml`](examples/basic_config.toml) for a more complete example.
 
-### 5. Start the proxy
+### 4. Start the proxy
 
 ```bash
 redlimitador run --config config.toml
 ```
 
-### 6. Configure the client
+### 5. Configure the client
 
 ```bash
 export HTTP_PROXY=http://127.0.0.1:8080
 export HTTPS_PROXY=http://127.0.0.1:8080
 ```
 
-### 7. Test it
+### 6. Test it
 
 ```bash
 # Should succeed (matches a rule)
@@ -183,18 +215,6 @@ redlimitador validate-config --config <PATH>
 | Flag | Description |
 |------|-------------|
 | `-c, --config <PATH>` | Path to configuration file (required) |
-
-## Building from Source
-
-Prerequisites: [Rust](https://www.rust-lang.org/tools/install) (stable toolchain).
-
-```bash
-git clone https://github.com/zyla/redlimitador.git
-cd redlimitador
-cargo build --release
-```
-
-The compiled binary is at `target/release/redlimitador`.
 
 ## Running Tests
 
