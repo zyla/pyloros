@@ -37,6 +37,9 @@ jobs:
       - name: Run tests with report generation
         run: ./tools/test-report/target/release/test-report
         if: always()
+      - name: Publish report to job summary
+        if: always()
+        run: cat test-report.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
