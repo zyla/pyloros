@@ -27,6 +27,10 @@ jobs:
     name: Test
     needs: check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -41,6 +45,27 @@ jobs:
       - name: Publish report to job summary
         if: always()
         run: cat test-report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Comment test report on PR
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SUMMARY=$(sed -n '3p' test-report.md)
+          JOB_ID=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" \
+            --jq '.jobs[] | select(.name == "Test") | .id')
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}#summary-${JOB_ID}"
+          printf -v BODY '## Test Report\n\n%s\n\n[View full report](%s)' "$SUMMARY" "$RUN_URL"
+
+          # Update existing comment or create new one
+          COMMENT_ID=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+            --jq '.[] | select(.body | startswith("## Test Report")) | .id' | head -1)
+
+          if [ -n "$COMMENT_ID" ]; then
+            gh api "repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" \
+              -X PATCH -f body="$BODY"
+          else
+            gh pr comment "${{ github.event.pull_request.number }}" --body "$BODY"
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
