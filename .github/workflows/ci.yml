@@ -75,6 +75,8 @@ jobs:
             test-report.html
       - name: Run Docker sandbox tests
         run: scripts/test-docker-sandbox.sh
+      - name: Run Docker Compose tests
+        run: scripts/test-docker-compose.sh
 
   coverage:
     name: Coverage
