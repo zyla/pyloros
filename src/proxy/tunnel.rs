@@ -210,37 +210,9 @@ impl TunnelHandler {
                     &body_bytes,
                 );
 
-                // Forward with the buffered body
-                let connect_port = self.upstream_port_override.unwrap_or(port);
-                let connect_host = self
-                    .upstream_host_override
-                    .as_deref()
-                    .unwrap_or(host)
-                    .to_string();
-                let full_body = Full::new(body_bytes).map_err(|e| match e {}).boxed();
-                let req = match rebuild_request_for_upstream(parts, full_body, host, connect_port) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        tracing::error!(error = %e, "Failed to rebuild request");
-                        return Ok(error_response(&e.to_string()));
-                    }
-                };
-                let result = forward_request_boxed(
-                    req,
-                    connect_host,
-                    connect_port,
-                    host.to_string(),
-                    self.upstream_tls_config.clone(),
-                )
-                .await;
-
-                return match result {
-                    Ok(resp) => Ok(resp),
-                    Err(e) => {
-                        tracing::error!(method = %method, url = %full_url, error = %e, "Failed to forward request");
-                        Ok(error_response(&e.to_string()))
-                    }
-                };
+                return self
+                    .forward_buffered(parts, body_bytes, host, port, &method, &full_url)
+                    .await;
             }
             FilterResult::AllowedWithLfsCheck(ref allowed_ops) => {
                 if self.log_allowed_requests {
@@ -274,37 +246,9 @@ impl TunnelHandler {
                     return Ok(blocked_response(&method, &full_url));
                 }
 
-                // Forward with the buffered body
-                let connect_port = self.upstream_port_override.unwrap_or(port);
-                let connect_host = self
-                    .upstream_host_override
-                    .as_deref()
-                    .unwrap_or(host)
-                    .to_string();
-                let full_body = Full::new(body_bytes).map_err(|e| match e {}).boxed();
-                let req = match rebuild_request_for_upstream(parts, full_body, host, connect_port) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        tracing::error!(error = %e, "Failed to rebuild request");
-                        return Ok(error_response(&e.to_string()));
-                    }
-                };
-                let result = forward_request_boxed(
-                    req,
-                    connect_host,
-                    connect_port,
-                    host.to_string(),
-                    self.upstream_tls_config.clone(),
-                )
-                .await;
-
-                return match result {
-                    Ok(resp) => Ok(resp),
-                    Err(e) => {
-                        tracing::error!(method = %method, url = %full_url, error = %e, "Failed to forward request");
-                        Ok(error_response(&e.to_string()))
-                    }
-                };
+                return self
+                    .forward_buffered(parts, body_bytes, host, port, &method, &full_url)
+                    .await;
             }
             FilterResult::Allowed => {
                 if self.log_allowed_requests {
@@ -392,6 +336,49 @@ impl TunnelHandler {
                 Err(e) => Err(e),
             }
         };
+
+        match result {
+            Ok(resp) => Ok(resp),
+            Err(e) => {
+                tracing::error!(method = %method, url = %full_url, error = %e, "Failed to forward request");
+                Ok(error_response(&e.to_string()))
+            }
+        }
+    }
+
+    /// Rebuild a buffered request for upstream and forward it.
+    /// Shared by branch-check and LFS-check arms.
+    async fn forward_buffered(
+        &self,
+        parts: hyper::http::request::Parts,
+        body_bytes: Bytes,
+        host: &str,
+        port: u16,
+        method: &str,
+        full_url: &str,
+    ) -> std::result::Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+        let connect_port = self.upstream_port_override.unwrap_or(port);
+        let connect_host = self
+            .upstream_host_override
+            .as_deref()
+            .unwrap_or(host)
+            .to_string();
+        let full_body = Full::new(body_bytes).map_err(|e| match e {}).boxed();
+        let req = match rebuild_request_for_upstream(parts, full_body, host, connect_port) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to rebuild request");
+                return Ok(error_response(&e.to_string()));
+            }
+        };
+        let result = forward_request_boxed(
+            req,
+            connect_host,
+            connect_port,
+            host.to_string(),
+            self.upstream_tls_config.clone(),
+        )
+        .await;
 
         match result {
             Ok(resp) => Ok(resp),
