@@ -14,6 +14,7 @@ use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 use super::response::{blocked_response, error_response, git_blocked_push_response};
 use crate::error::{Error, Result};
+use crate::filter::lfs;
 use crate::filter::pktline;
 use crate::filter::{CredentialEngine, FilterEngine, FilterResult, RequestInfo};
 use crate::tls::MitmCertificateGenerator;
@@ -24,6 +25,7 @@ pub struct TunnelHandler {
     filter_engine: Arc<FilterEngine>,
     credential_engine: Arc<CredentialEngine>,
     upstream_port_override: Option<u16>,
+    upstream_host_override: Option<String>,
     upstream_tls_config: Option<Arc<ClientConfig>>,
     log_allowed_requests: bool,
     log_blocked_requests: bool,
@@ -40,6 +42,7 @@ impl TunnelHandler {
             filter_engine,
             credential_engine,
             upstream_port_override: None,
+            upstream_host_override: None,
             upstream_tls_config: None,
             log_allowed_requests: true,
             log_blocked_requests: true,
@@ -49,6 +52,13 @@ impl TunnelHandler {
     /// Override the upstream port for all forwarded connections (for testing).
     pub fn with_upstream_port_override(mut self, port: u16) -> Self {
         self.upstream_port_override = Some(port);
+        self
+    }
+
+    /// Override the upstream host for TCP connections (for testing with non-resolvable hostnames).
+    /// The original hostname is still used for TLS SNI.
+    pub fn with_upstream_host_override(mut self, host: String) -> Self {
+        self.upstream_host_override = Some(host);
         self
     }
 
@@ -199,6 +209,11 @@ impl TunnelHandler {
 
                 // Forward with the buffered body
                 let connect_port = self.upstream_port_override.unwrap_or(port);
+                let connect_host = self
+                    .upstream_host_override
+                    .as_deref()
+                    .unwrap_or(host)
+                    .to_string();
                 let full_body = Full::new(body_bytes).map_err(|e| match e {}).boxed();
                 let req = match rebuild_request_for_upstream(parts, full_body, host, connect_port) {
                     Ok(r) => r,
@@ -209,8 +224,73 @@ impl TunnelHandler {
                 };
                 let result = forward_request_boxed(
                     req,
-                    host.to_string(),
+                    connect_host,
                     connect_port,
+                    host.to_string(),
+                    self.upstream_tls_config.clone(),
+                )
+                .await;
+
+                return match result {
+                    Ok(resp) => Ok(resp),
+                    Err(e) => {
+                        tracing::error!(method = %method, url = %full_url, error = %e, "Failed to forward request");
+                        Ok(error_response(&e.to_string()))
+                    }
+                };
+            }
+            FilterResult::AllowedWithLfsCheck(ref allowed_ops) => {
+                if self.log_allowed_requests {
+                    tracing::info!(
+                        method = %method,
+                        url = %full_url,
+                        "ALLOWED (LFS check pending)"
+                    );
+                }
+
+                // Buffer the request body to inspect the LFS operation field
+                let (parts, body) = req.into_parts();
+                let body_bytes = body
+                    .collect()
+                    .await
+                    .map_err(|e| {
+                        tracing::error!(error = %e, "Failed to buffer request body for LFS check");
+                        e
+                    })?
+                    .to_bytes();
+
+                if !lfs::check_lfs_operation(&body_bytes, allowed_ops) {
+                    if self.log_blocked_requests {
+                        tracing::warn!(
+                            method = %method,
+                            url = %full_url,
+                            allowed_ops = ?allowed_ops,
+                            "BLOCKED (LFS operation not allowed)"
+                        );
+                    }
+                    return Ok(blocked_response(&method, &full_url));
+                }
+
+                // Forward with the buffered body
+                let connect_port = self.upstream_port_override.unwrap_or(port);
+                let connect_host = self
+                    .upstream_host_override
+                    .as_deref()
+                    .unwrap_or(host)
+                    .to_string();
+                let full_body = Full::new(body_bytes).map_err(|e| match e {}).boxed();
+                let req = match rebuild_request_for_upstream(parts, full_body, host, connect_port) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to rebuild request");
+                        return Ok(error_response(&e.to_string()));
+                    }
+                };
+                let result = forward_request_boxed(
+                    req,
+                    connect_host,
+                    connect_port,
+                    host.to_string(),
                     self.upstream_tls_config.clone(),
                 )
                 .await;
@@ -236,6 +316,11 @@ impl TunnelHandler {
 
         // Forward the request to the actual server
         let connect_port = self.upstream_port_override.unwrap_or(port);
+        let connect_host = self
+            .upstream_host_override
+            .as_deref()
+            .unwrap_or(host)
+            .to_string();
         let result = if is_websocket {
             // Inject credentials into the WebSocket request before forwarding
             let (mut parts, body) = req.into_parts();
@@ -244,8 +329,9 @@ impl TunnelHandler {
             let req = Request::from_parts(parts, body);
             forward_websocket(
                 req,
-                host.to_string(),
+                connect_host,
                 connect_port,
+                host.to_string(),
                 self.upstream_tls_config.clone(),
             )
             .await
@@ -258,8 +344,9 @@ impl TunnelHandler {
                 Ok(req) => {
                     forward_request_boxed(
                         req,
-                        host.to_string(),
+                        connect_host,
                         connect_port,
+                        host.to_string(),
                         self.upstream_tls_config.clone(),
                     )
                     .await
@@ -282,12 +369,16 @@ impl TunnelHandler {
 ///
 /// Shared by both `forward_request` (which branches h1/h2 based on ALPN)
 /// and `forward_websocket` (which always uses h1 with upgrades).
+///
+/// `connect_host` is the hostname/IP used for TCP connection (may be overridden
+/// for testing). `sni_host` is the hostname used for TLS SNI.
 async fn connect_upstream_tls(
-    host: &str,
+    connect_host: &str,
     port: u16,
+    sni_host: &str,
     upstream_tls_config: Option<Arc<ClientConfig>>,
 ) -> Result<tokio_rustls::client::TlsStream<TcpStream>> {
-    let addr = format!("{}:{}", host, port);
+    let addr = format!("{}:{}", connect_host, port);
     let tcp = TcpStream::connect(&addr)
         .await
         .map_err(|e| Error::proxy(format!("Failed to connect to {}: {}", addr, e)))?;
@@ -308,13 +399,13 @@ async fn connect_upstream_tls(
 
     let connector = TlsConnector::from(client_config);
 
-    let server_name = rustls::pki_types::ServerName::try_from(host.to_string())
-        .map_err(|e| Error::proxy(format!("Invalid server name '{}': {}", host, e)))?;
+    let server_name = rustls::pki_types::ServerName::try_from(sni_host.to_string())
+        .map_err(|e| Error::proxy(format!("Invalid server name '{}': {}", sni_host, e)))?;
 
     connector
         .connect(server_name, tcp)
         .await
-        .map_err(|e| Error::tls(format!("TLS connection to {} failed: {}", host, e)))
+        .map_err(|e| Error::tls(format!("TLS connection to {} failed: {}", sni_host, e)))
 }
 
 /// Rebuild an incoming request for forwarding to the upstream server,
@@ -343,18 +434,20 @@ fn rebuild_request_for_upstream<B>(
 /// Forward a request with a BoxBody to the upstream server (supports h1 and h2 via ALPN).
 async fn forward_request_boxed(
     req: Request<BoxBody<Bytes, hyper::Error>>,
-    host: String,
+    connect_host: String,
     port: u16,
+    sni_host: String,
     upstream_tls_config: Option<Arc<ClientConfig>>,
 ) -> Result<Response<BoxBody<Bytes, hyper::Error>>> {
     let method = req.method().clone();
     let uri = req.uri().clone();
 
-    let tls_stream = connect_upstream_tls(&host, port, upstream_tls_config).await?;
+    let tls_stream =
+        connect_upstream_tls(&connect_host, port, &sni_host, upstream_tls_config).await?;
 
     // Check negotiated ALPN protocol
     let negotiated_h2 = tls_stream.get_ref().1.alpn_protocol() == Some(b"h2".as_slice());
-    tracing::debug!(host = %host, h2 = negotiated_h2, "Upstream TLS handshake complete");
+    tracing::debug!(host = %sni_host, h2 = negotiated_h2, "Upstream TLS handshake complete");
 
     let io = TokioIo::new(tls_stream);
 
@@ -413,11 +506,13 @@ async fn forward_request_boxed(
 /// the h2 ALPN negotiation and forces an h1 connection with upgrades enabled.
 async fn forward_websocket(
     mut req: Request<Incoming>,
-    host: String,
+    connect_host: String,
     port: u16,
+    sni_host: String,
     upstream_tls_config: Option<Arc<ClientConfig>>,
 ) -> Result<Response<BoxBody<Bytes, hyper::Error>>> {
-    let tls_stream = connect_upstream_tls(&host, port, upstream_tls_config).await?;
+    let tls_stream =
+        connect_upstream_tls(&connect_host, port, &sni_host, upstream_tls_config).await?;
     let io = TokioIo::new(tls_stream);
 
     let method = req.method().clone();
@@ -443,7 +538,7 @@ async fn forward_websocket(
     let client_on_upgrade = hyper::upgrade::on(&mut req);
 
     let (parts, body) = req.into_parts();
-    let upstream_req = rebuild_request_for_upstream(parts, body, &host, port)?;
+    let upstream_req = rebuild_request_for_upstream(parts, body, &sni_host, port)?;
 
     let mut resp = sender.send_request(upstream_req).await.map_err(|e| {
         Error::proxy(format!(

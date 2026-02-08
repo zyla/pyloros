@@ -11,3 +11,10 @@ Not in SPEC because too vaguely worded.
   - Likely approach: proxy maintains a local clone, applies the incoming pack, runs `git diff` to identify changed files, allows/blocks, then forwards
   - Heavy feature: disk I/O, extra network round-trips, git subprocess management — should be gated behind explicit config
   - Build separately from branch-level git rules (which are lightweight pkt-line inspection)
+
+- Git-LFS upload content verification
+  - The git-lfs spec does not require servers to verify uploaded content matches the claimed OID (SHA-256)
+  - A proxy-side streaming verification is feasible: compute SHA-256 while forwarding the upload body, hold back the final chunk, verify the hash matches the claimed OID before sending it, abort the connection on mismatch
+  - Requires stateful correlation between batch responses and upload requests: parse batch response JSON to extract OID → transfer-URL mappings, then match subsequent PUT requests against those mappings to know which OID to verify
+  - Challenges: transfer URLs are opaque/dynamic (may include tokens, timestamps), may be on different hosts from the git server, the mapping needs TTL-based expiration and concurrent access handling
+  - Would prevent an agent from uploading arbitrary content under a claimed OID, which could be used to poison LFS-tracked files in a repository

@@ -76,6 +76,18 @@ The optional `branches` field restricts which refs a push can target. It is only
 
 See `DECISIONS.md` for implementation details (smart HTTP endpoint mapping, pkt-line inspection, compilation model).
 
+#### Git-LFS support
+
+Git-LFS uses a separate HTTP endpoint (`POST {repo}/info/lfs/objects/batch`) to negotiate large file transfers. Git rules automatically include this endpoint so that LFS operations work without additional manual rules.
+
+- `git = "fetch"` allows LFS **download** operations (batch requests with `"operation": "download"`)
+- `git = "push"` allows LFS **upload** operations (batch requests with `"operation": "upload"`)
+- `git = "*"` allows both download and upload
+- The proxy inspects the JSON body of LFS batch requests to verify the `operation` field matches what the rule allows
+- **Branch restrictions do not apply** to LFS. LFS blobs are content-addressed; the actual ref update goes through `git-receive-pack` which is already branch-checked
+- **Plain HTTP is blocked** for LFS batch requests (same default-deny principle as branch checks — body inspection requires HTTPS)
+- **Transfer URLs**: LFS batch responses contain transfer URLs (often on external hosts like S3) for the actual object upload/download. These are **not** automatically allowed — users must add separate HTTP rules for the transfer hosts (e.g., `method = "GET", url = "https://github-cloud.s3.amazonaws.com/*"`)
+
 ### Protocol Support
 - HTTP/1.1
 - HTTP/2
@@ -220,6 +232,7 @@ Test coverage includes:
 - Repo-level filtering: URL patterns restrict which repos are accessible (`git_rules_test.rs`)
 - Branch-level restriction: `branches` patterns allow/block pushes to specific refs (`git_rules_test.rs`)
 - Pkt-line parser unit tests: ref extraction, capabilities handling, branch matching (`pktline.rs`)
+- Git-LFS: LFS batch endpoint filtering by operation type, plain HTTP blocking, merged-scan for combined fetch+push rules (`git_lfs_test.rs`)
 
 ### Test Report Generation
 

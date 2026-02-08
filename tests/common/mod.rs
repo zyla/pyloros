@@ -14,6 +14,7 @@ use redlimitador::tls::{CertificateAuthority, GeneratedCa};
 use redlimitador::{Config, ProxyServer};
 use rustls::pki_types::CertificateDer;
 use rustls::{ClientConfig, ServerConfig};
+use std::collections::HashMap;
 use std::fmt::{Debug, Display};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -670,11 +671,54 @@ impl TestProxy {
         Self::start_inner(ca, rules, Vec::new(), upstream_port).await
     }
 
+    /// Start a proxy with reporting and upstream host override (for non-resolvable hostnames).
+    pub async fn start_with_host_override_reported(
+        report: &TestReport,
+        ca: &TestCa,
+        rules: Vec<redlimitador::config::Rule>,
+        upstream_port: u16,
+        upstream_host: &str,
+    ) -> Self {
+        let desc = rules
+            .iter()
+            .map(|r| {
+                if let Some(ref git) = r.git {
+                    format!("`git={} {}`", git, r.url)
+                } else {
+                    format!("`{} {}`", r.method.as_deref().unwrap_or("?"), r.url)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        report.setup(format!(
+            "Proxy with rules: [{}] (host override: {})",
+            desc, upstream_host
+        ));
+        Self::start_inner_with_host(
+            ca,
+            rules,
+            Vec::new(),
+            upstream_port,
+            Some(upstream_host.to_string()),
+        )
+        .await
+    }
+
     async fn start_inner(
         ca: &TestCa,
         rules: Vec<redlimitador::config::Rule>,
         credentials: Vec<redlimitador::config::Credential>,
         upstream_port: u16,
+    ) -> Self {
+        Self::start_inner_with_host(ca, rules, credentials, upstream_port, None).await
+    }
+
+    async fn start_inner_with_host(
+        ca: &TestCa,
+        rules: Vec<redlimitador::config::Rule>,
+        credentials: Vec<redlimitador::config::Credential>,
+        upstream_port: u16,
+        upstream_host: Option<String>,
     ) -> Self {
         let mut config = Config::minimal(
             "127.0.0.1:0".to_string(),
@@ -692,6 +736,9 @@ impl TestProxy {
         server = server
             .with_upstream_port_override(upstream_port)
             .with_upstream_tls(client_tls);
+        if let Some(host) = upstream_host {
+            server = server.with_upstream_host_override(host);
+        }
 
         let addr = server.bind().await.unwrap();
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
@@ -1175,4 +1222,286 @@ pub fn ws_echo_handler() -> UpstreamHandler {
 /// Compute the Sec-WebSocket-Accept value from a Sec-WebSocket-Key.
 fn tungstenite_accept_key(key: &str) -> String {
     tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes())
+}
+
+// ---------------------------------------------------------------------------
+// Git-LFS test infrastructure
+// ---------------------------------------------------------------------------
+
+/// In-memory LFS object store, keyed by OID (SHA-256 hex string).
+pub type LfsStore = Arc<Mutex<HashMap<String, Vec<u8>>>>;
+
+/// Check whether `git lfs` is available on this system.
+pub fn git_lfs_available() -> bool {
+    std::process::Command::new("git")
+        .args(["lfs", "version"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Extract LFS object OID from a path like `/repo.git/lfs/objects/<oid>`.
+/// Returns None if the path doesn't match or the OID is not a valid SHA-256 hex string.
+fn extract_lfs_object_oid(path: &str) -> Option<String> {
+    let idx = path.find("/lfs/objects/")?;
+    let after = &path[idx + "/lfs/objects/".len()..];
+    if after.len() == 64 && !after.contains('/') && after.chars().all(|c| c.is_ascii_hexdigit()) {
+        Some(after.to_string())
+    } else {
+        None
+    }
+}
+
+/// Create an upstream handler that serves both git smart HTTP (via `git http-backend`)
+/// and Git-LFS batch API + object transfers.
+///
+/// Routing:
+/// - `POST .../info/lfs/objects/batch` → LFS batch API (parse JSON, return transfer URLs)
+/// - `GET .../lfs/objects/<oid>` → serve LFS object from in-memory store
+/// - `PUT .../lfs/objects/<oid>` → store LFS object in in-memory store
+/// - Everything else → delegate to `git http-backend` CGI
+pub fn lfs_git_handler(
+    backend_path: std::path::PathBuf,
+    git_root: std::path::PathBuf,
+    request_log: RequestLog,
+    lfs_store: LfsStore,
+) -> UpstreamHandler {
+    let lfs_request_log = request_log.clone();
+    let git_handler = git_cgi_handler(backend_path, git_root, request_log);
+
+    Arc::new(move |req: Request<Incoming>| {
+        let path = req.uri().path().to_string();
+        let method = req.method().clone();
+
+        // Log LFS requests (git CGI requests are logged by git_cgi_handler)
+        if path.ends_with("/info/lfs/objects/batch") || extract_lfs_object_oid(&path).is_some() {
+            lfs_request_log
+                .lock()
+                .unwrap()
+                .push(format!("{} {}", method, path));
+        }
+
+        if path.ends_with("/info/lfs/objects/batch") && method == hyper::Method::POST {
+            let lfs_store = lfs_store.clone();
+            // Read host from URI authority (h2) or Host header (h1), before consuming body
+            let host = req
+                .uri()
+                .host()
+                .map(|h| h.to_string())
+                .or_else(|| {
+                    req.headers()
+                        .get("host")
+                        .and_then(|v| v.to_str().ok())
+                        .map(|h| h.split(':').next().unwrap_or(h).to_string())
+                })
+                .unwrap_or_else(|| "localhost".to_string());
+            Box::pin(async move {
+                let body_bytes = req.collect().await.unwrap().to_bytes();
+                let parsed: serde_json::Value =
+                    serde_json::from_slice(&body_bytes).unwrap_or(serde_json::Value::Null);
+                let operation = parsed
+                    .get("operation")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let objects = parsed
+                    .get("objects")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+
+                let repo_path = path.strip_suffix("/info/lfs/objects/batch").unwrap_or("");
+
+                let mut response_objects = Vec::new();
+                let store = lfs_store.lock().unwrap();
+                for obj in &objects {
+                    let oid = obj.get("oid").and_then(|v| v.as_str()).unwrap_or("");
+                    let size = obj.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let href = format!("https://{}{}/lfs/objects/{}", host, repo_path, oid);
+
+                    let actions = match operation {
+                        "download" => {
+                            serde_json::json!({ "download": { "href": href } })
+                        }
+                        "upload" => {
+                            if store.contains_key(oid) {
+                                serde_json::json!({})
+                            } else {
+                                serde_json::json!({ "upload": { "href": href } })
+                            }
+                        }
+                        _ => serde_json::json!({}),
+                    };
+
+                    response_objects.push(serde_json::json!({
+                        "oid": oid,
+                        "size": size,
+                        "authenticated": true,
+                        "actions": actions,
+                    }));
+                }
+                drop(store);
+
+                let response_body = serde_json::json!({
+                    "transfer": "basic",
+                    "objects": response_objects,
+                });
+
+                Ok(Response::builder()
+                    .status(200)
+                    .header("Content-Type", "application/vnd.git-lfs+json")
+                    .body(
+                        Full::new(Bytes::from(response_body.to_string()))
+                            .map_err(|e| match e {})
+                            .boxed(),
+                    )
+                    .unwrap())
+            })
+        } else if let Some(oid) = extract_lfs_object_oid(&path) {
+            if method == hyper::Method::GET {
+                let lfs_store = lfs_store.clone();
+                Box::pin(async move {
+                    let store = lfs_store.lock().unwrap();
+                    if let Some(content) = store.get(&oid) {
+                        Ok(Response::builder()
+                            .status(200)
+                            .header("Content-Type", "application/octet-stream")
+                            .body(
+                                Full::new(Bytes::from(content.clone()))
+                                    .map_err(|e| match e {})
+                                    .boxed(),
+                            )
+                            .unwrap())
+                    } else {
+                        Ok(Response::builder()
+                            .status(404)
+                            .body(
+                                Full::new(Bytes::from("Object not found"))
+                                    .map_err(|e| match e {})
+                                    .boxed(),
+                            )
+                            .unwrap())
+                    }
+                })
+            } else if method == hyper::Method::PUT {
+                let lfs_store = lfs_store.clone();
+                Box::pin(async move {
+                    let body_bytes = req.collect().await.unwrap().to_bytes().to_vec();
+                    lfs_store.lock().unwrap().insert(oid, body_bytes);
+                    Ok(Response::builder()
+                        .status(200)
+                        .body(
+                            Full::new(Bytes::from_static(b""))
+                                .map_err(|e| match e {})
+                                .boxed(),
+                        )
+                        .unwrap())
+                })
+            } else {
+                Box::pin(async {
+                    Ok(Response::builder()
+                        .status(405)
+                        .body(
+                            Full::new(Bytes::from("Method not allowed"))
+                                .map_err(|e| match e {})
+                                .boxed(),
+                        )
+                        .unwrap())
+                })
+            }
+        } else {
+            git_handler(req)
+        }
+    })
+}
+
+/// Recursively collect LFS objects from `.git/lfs/objects/` into the store.
+fn collect_lfs_objects(dir: &std::path::Path, store: &LfsStore) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_lfs_objects(&path, store);
+            } else if path.is_file() {
+                let filename = path.file_name().unwrap().to_str().unwrap().to_string();
+                // LFS OIDs are 64 hex characters (SHA-256)
+                if filename.len() == 64 && filename.chars().all(|c| c.is_ascii_hexdigit()) {
+                    let content = std::fs::read(&path).unwrap();
+                    store.lock().unwrap().insert(filename, content);
+                }
+            }
+        }
+    }
+}
+
+/// Create a test git repo with LFS-tracked files.
+///
+/// Returns:
+/// - The repos directory (GIT_PROJECT_ROOT for git-http-backend)
+/// - An in-memory LFS store pre-populated with the LFS objects from the repo
+///
+/// The bare repo has `http.receivepack = true` for push tests.
+pub fn create_test_repo_with_lfs(
+    dir: &std::path::Path,
+    repo_name: &str,
+) -> (std::path::PathBuf, LfsStore) {
+    let source_dir = dir.join("source");
+    std::fs::create_dir_all(&source_dir).unwrap();
+
+    let run = |args: &[&str], cwd: &std::path::Path| {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+
+    run(&["init", "-b", "main"], &source_dir);
+    run(&["config", "user.email", "test@test.com"], &source_dir);
+    run(&["config", "user.name", "Test User"], &source_dir);
+    run(&["lfs", "install", "--local"], &source_dir);
+    run(&["lfs", "track", "*.bin"], &source_dir);
+
+    let test_content = b"Hello from LFS! This is binary content for testing.\n";
+    std::fs::write(source_dir.join("test-data.bin"), test_content).unwrap();
+
+    run(&["add", ".gitattributes", "test-data.bin"], &source_dir);
+    run(&["commit", "-m", "Initial commit with LFS"], &source_dir);
+
+    // Bare clone (copies git objects including LFS pointers, but not LFS content)
+    let repos_dir = dir.join("repos");
+    std::fs::create_dir_all(&repos_dir).unwrap();
+    run(
+        &[
+            "clone",
+            "--bare",
+            source_dir.to_str().unwrap(),
+            repos_dir.join(repo_name).to_str().unwrap(),
+        ],
+        dir,
+    );
+
+    // Enable receive-pack for push tests
+    run(
+        &["config", "http.receivepack", "true"],
+        &repos_dir.join(repo_name),
+    );
+
+    // Extract LFS objects from source repo into in-memory store
+    let store: LfsStore = Arc::new(Mutex::new(HashMap::new()));
+    let lfs_objects_dir = source_dir.join(".git/lfs/objects");
+    if lfs_objects_dir.exists() {
+        collect_lfs_objects(&lfs_objects_dir, &store);
+    }
+    assert!(
+        !store.lock().unwrap().is_empty(),
+        "No LFS objects found in source repo — git-lfs may not be installed"
+    );
+
+    (repos_dir, store)
 }

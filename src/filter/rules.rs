@@ -86,6 +86,8 @@ pub struct CompiledRule {
     websocket: bool,
     /// Branch patterns for git push restriction (if Some, body inspection required)
     branch_patterns: Option<Vec<PatternMatcher>>,
+    /// Allowed LFS operations (if Some, body inspection required for LFS batch endpoint)
+    lfs_operations: Option<Vec<String>>,
 }
 
 impl CompiledRule {
@@ -108,6 +110,7 @@ impl CompiledRule {
             url,
             websocket: rule.websocket,
             branch_patterns: None,
+            lfs_operations: None,
         })
     }
 
@@ -172,6 +175,18 @@ impl CompiledRule {
             )?);
         }
 
+        // LFS batch endpoint: POST <repo>/info/lfs/objects/batch
+        {
+            let mut lfs_ops = Vec::new();
+            if needs_fetch {
+                lfs_ops.push("download".to_string());
+            }
+            if needs_push {
+                lfs_ops.push("upload".to_string());
+            }
+            rules.push(Self::compile_lfs_batch_endpoint(base_url, lfs_ops)?);
+        }
+
         Ok(rules)
     }
 
@@ -197,6 +212,22 @@ impl CompiledRule {
             url,
             websocket: false,
             branch_patterns,
+            lfs_operations: None,
+        })
+    }
+
+    /// Compile the LFS batch endpoint rule for a git rule.
+    fn compile_lfs_batch_endpoint(base_url: &str, lfs_operations: Vec<String>) -> Result<Self> {
+        let full_url = format!("{}/info/lfs/objects/batch", base_url);
+        let method_matcher = Some(PatternMatcher::new("POST")?);
+        let url = UrlPattern::new(&full_url)?;
+
+        Ok(Self {
+            method: method_matcher,
+            url,
+            websocket: false,
+            branch_patterns: None,
+            lfs_operations: Some(lfs_operations),
         })
     }
 
@@ -234,6 +265,9 @@ pub enum FilterResult {
     Allowed,
     /// Request is allowed but requires branch-level body inspection
     AllowedWithBranchCheck(Vec<PatternMatcher>),
+    /// Request is allowed but requires LFS operation body inspection.
+    /// Carries the merged list of allowed operations (e.g., ["download", "upload"]).
+    AllowedWithLfsCheck(Vec<String>),
 }
 
 /// The filter engine that evaluates requests against rules
@@ -262,16 +296,36 @@ impl FilterEngine {
         Self { rules: Vec::new() }
     }
 
-    /// Check a request against rules, returning detailed result
+    /// Check a request against rules, returning detailed result.
+    ///
+    /// For LFS batch endpoint rules, multiple matching rules are merged: their allowed
+    /// operations are accumulated so that separate fetch + push rules for the same repo
+    /// don't block each other. For all other rule types, first-match wins.
     pub fn check(&self, request: &RequestInfo) -> FilterResult {
+        let mut accumulated_lfs_ops: Vec<String> = Vec::new();
+
         for rule in &self.rules {
             if rule.matches(request) {
                 if let Some(ref patterns) = rule.branch_patterns {
                     return FilterResult::AllowedWithBranchCheck(patterns.clone());
                 }
+                if let Some(ref ops) = rule.lfs_operations {
+                    // Accumulate LFS operations across matching rules (merged-scan)
+                    for op in ops {
+                        if !accumulated_lfs_ops.contains(op) {
+                            accumulated_lfs_ops.push(op.clone());
+                        }
+                    }
+                    continue;
+                }
                 return FilterResult::Allowed;
             }
         }
+
+        if !accumulated_lfs_ops.is_empty() {
+            return FilterResult::AllowedWithLfsCheck(accumulated_lfs_ops);
+        }
+
         FilterResult::Blocked
     }
 
@@ -643,5 +697,176 @@ mod tests {
         t.assert_true("api.github.com GET", engine.is_allowed(&api));
         t.assert_true("api.github.com POST", engine.is_allowed(&graphql));
         t.assert_true("raw.githubusercontent.com", engine.is_allowed(&raw));
+    }
+
+    fn make_git_rule(git_op: &str, url: &str) -> Rule {
+        Rule {
+            method: None,
+            url: url.to_string(),
+            websocket: false,
+            git: Some(git_op.to_string()),
+            branches: None,
+        }
+    }
+
+    #[test]
+    fn test_git_fetch_rule_generates_lfs_endpoint() {
+        let t = test_report!("Git fetch rule generates LFS batch endpoint with download op");
+        let engine =
+            FilterEngine::new(vec![make_git_rule("fetch", "https://github.com/org/repo")]).unwrap();
+
+        // fetch = 2 smart HTTP endpoints + 1 LFS batch = 3
+        t.assert_eq("rule count", &engine.rule_count(), &3usize);
+
+        let lfs_req = RequestInfo::http(
+            "POST",
+            "https",
+            "github.com",
+            None,
+            "/org/repo/info/lfs/objects/batch",
+            None,
+        );
+        let result = engine.check(&lfs_req);
+        match result {
+            FilterResult::AllowedWithLfsCheck(ops) => {
+                t.assert_eq("allowed ops", &ops, &vec!["download".to_string()]);
+            }
+            other => panic!("expected AllowedWithLfsCheck, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_git_push_rule_generates_lfs_endpoint() {
+        let t = test_report!("Git push rule generates LFS batch endpoint with upload op");
+        let engine =
+            FilterEngine::new(vec![make_git_rule("push", "https://github.com/org/repo")]).unwrap();
+
+        // push = 2 smart HTTP endpoints + 1 LFS batch = 3
+        t.assert_eq("rule count", &engine.rule_count(), &3usize);
+
+        let lfs_req = RequestInfo::http(
+            "POST",
+            "https",
+            "github.com",
+            None,
+            "/org/repo/info/lfs/objects/batch",
+            None,
+        );
+        let result = engine.check(&lfs_req);
+        match result {
+            FilterResult::AllowedWithLfsCheck(ops) => {
+                t.assert_eq("allowed ops", &ops, &vec!["upload".to_string()]);
+            }
+            other => panic!("expected AllowedWithLfsCheck, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_git_star_rule_generates_lfs_endpoint() {
+        let t = test_report!("Git * rule generates LFS batch endpoint with both ops");
+        let engine =
+            FilterEngine::new(vec![make_git_rule("*", "https://github.com/org/repo")]).unwrap();
+
+        // star = 4 smart HTTP endpoints + 1 LFS batch = 5
+        t.assert_eq("rule count", &engine.rule_count(), &5usize);
+
+        let lfs_req = RequestInfo::http(
+            "POST",
+            "https",
+            "github.com",
+            None,
+            "/org/repo/info/lfs/objects/batch",
+            None,
+        );
+        let result = engine.check(&lfs_req);
+        match result {
+            FilterResult::AllowedWithLfsCheck(ops) => {
+                t.assert_eq(
+                    "allowed ops",
+                    &ops,
+                    &vec!["download".to_string(), "upload".to_string()],
+                );
+            }
+            other => panic!("expected AllowedWithLfsCheck, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_lfs_merged_scan_separate_fetch_push() {
+        let t = test_report!("Separate fetch+push rules merge LFS operations");
+        let engine = FilterEngine::new(vec![
+            make_git_rule("fetch", "https://github.com/org/repo"),
+            make_git_rule("push", "https://github.com/org/repo"),
+        ])
+        .unwrap();
+
+        let lfs_req = RequestInfo::http(
+            "POST",
+            "https",
+            "github.com",
+            None,
+            "/org/repo/info/lfs/objects/batch",
+            None,
+        );
+        let result = engine.check(&lfs_req);
+        match result {
+            FilterResult::AllowedWithLfsCheck(ops) => {
+                t.assert_true(
+                    "download in merged ops",
+                    ops.contains(&"download".to_string()),
+                );
+                t.assert_true("upload in merged ops", ops.contains(&"upload".to_string()));
+            }
+            other => panic!("expected AllowedWithLfsCheck, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_lfs_get_method_blocked() {
+        let t = test_report!("GET to LFS batch endpoint is blocked (only POST allowed)");
+        let engine =
+            FilterEngine::new(vec![make_git_rule("*", "https://github.com/org/repo")]).unwrap();
+
+        let get_lfs = RequestInfo::http(
+            "GET",
+            "https",
+            "github.com",
+            None,
+            "/org/repo/info/lfs/objects/batch",
+            None,
+        );
+        t.assert_true(
+            "GET to LFS batch blocked",
+            matches!(engine.check(&get_lfs), FilterResult::Blocked),
+        );
+    }
+
+    #[test]
+    fn test_lfs_branch_restricted_push_still_allows_lfs() {
+        let t = test_report!("Branch-restricted push rule still generates LFS upload rule");
+        let rule = Rule {
+            method: None,
+            url: "https://github.com/org/repo".to_string(),
+            websocket: false,
+            git: Some("push".to_string()),
+            branches: Some(vec!["feature/*".to_string()]),
+        };
+        let engine = FilterEngine::new(vec![rule]).unwrap();
+
+        let lfs_req = RequestInfo::http(
+            "POST",
+            "https",
+            "github.com",
+            None,
+            "/org/repo/info/lfs/objects/batch",
+            None,
+        );
+        let result = engine.check(&lfs_req);
+        match result {
+            FilterResult::AllowedWithLfsCheck(ops) => {
+                t.assert_eq("allowed ops", &ops, &vec!["upload".to_string()]);
+            }
+            other => panic!("expected AllowedWithLfsCheck, got {:?}", other),
+        }
     }
 }
