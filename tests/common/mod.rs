@@ -894,7 +894,7 @@ pub fn create_test_repo(dir: &std::path::Path, repo_name: &str) -> std::path::Pa
         );
     };
 
-    run(&["init"], &source_dir);
+    run(&["init", "-b", "main"], &source_dir);
     run(&["config", "user.email", "test@test.com"], &source_dir);
     run(&["config", "user.name", "Test User"], &source_dir);
 
