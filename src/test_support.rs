@@ -145,6 +145,24 @@ impl TestReport {
         );
     }
 
+    #[allow(dead_code)]
+    pub fn assert_starts_with(&self, label: &str, value: &str, prefix: &str) {
+        let pass = value.starts_with(prefix);
+        let value_s = Self::truncate_for_display(&format!("{:?}", value), 1000);
+        let prefix_s = Self::truncate_for_display(&format!("{:?}", prefix), 1000);
+        let msg = format!("{}: {} starts with {}", label, value_s, prefix_s);
+        self.steps.lock().unwrap().push(if pass {
+            Step::AssertPass(msg)
+        } else {
+            Step::AssertFail(msg.clone())
+        });
+        assert!(
+            pass,
+            "{}: {:?} does not start with {:?}",
+            label, value, prefix
+        );
+    }
+
     pub fn assert_true(&self, label: &str, value: bool) {
         let msg = format!("{}: `{}`", label, value);
         self.steps.lock().unwrap().push(if value {
