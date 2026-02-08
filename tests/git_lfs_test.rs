@@ -573,6 +573,21 @@ async fn test_lfs_clone_downloads_content() {
         "version https://git-lfs",
     );
 
+    // Verify traffic actually went through the proxy to upstream
+    let logged = request_log.lock().unwrap();
+    let saw_lfs_batch = logged.iter().any(|r| r.contains("info/lfs/objects/batch"));
+    t.assert_true(
+        "LFS batch request reached upstream via proxy",
+        saw_lfs_batch,
+    );
+    let saw_lfs_download = logged
+        .iter()
+        .any(|r| r.contains("lfs/objects/") && r.starts_with("GET"));
+    t.assert_true(
+        "LFS object download reached upstream via proxy",
+        saw_lfs_download,
+    );
+
     proxy.shutdown();
     upstream.shutdown();
 }
@@ -691,6 +706,21 @@ async fn test_lfs_push_uploads_content() {
     let found = store.values().any(|v| v == new_content);
     t.assert_true("LFS store contains pushed content", found);
 
+    // Verify traffic actually went through the proxy to upstream
+    let logged = request_log.lock().unwrap();
+    let saw_lfs_batch = logged.iter().any(|r| r.contains("info/lfs/objects/batch"));
+    t.assert_true(
+        "LFS batch request reached upstream via proxy",
+        saw_lfs_batch,
+    );
+    let saw_lfs_upload = logged
+        .iter()
+        .any(|r| r.contains("lfs/objects/") && r.starts_with("PUT"));
+    t.assert_true(
+        "LFS object upload reached upstream via proxy",
+        saw_lfs_upload,
+    );
+
     proxy.shutdown();
     upstream.shutdown();
 }
@@ -750,6 +780,14 @@ async fn test_lfs_clone_blocked_without_fetch_rule() {
 
     // Clone should fail — push-only rule doesn't allow git-upload-pack endpoints
     t.assert_true("git clone failed (no fetch rule)", !output.status.success());
+
+    // Verify proxy blocked the requests — upstream should not have seen git-upload-pack
+    let logged = request_log.lock().unwrap();
+    let saw_upload_pack = logged.iter().any(|r| r.contains("git-upload-pack"));
+    t.assert_true(
+        "No git-upload-pack reached upstream (proxy blocked it)",
+        !saw_upload_pack,
+    );
 
     proxy.shutdown();
     upstream.shutdown();

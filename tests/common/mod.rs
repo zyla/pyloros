@@ -1266,11 +1266,20 @@ pub fn lfs_git_handler(
     request_log: RequestLog,
     lfs_store: LfsStore,
 ) -> UpstreamHandler {
+    let lfs_request_log = request_log.clone();
     let git_handler = git_cgi_handler(backend_path, git_root, request_log);
 
     Arc::new(move |req: Request<Incoming>| {
         let path = req.uri().path().to_string();
         let method = req.method().clone();
+
+        // Log LFS requests (git CGI requests are logged by git_cgi_handler)
+        if path.ends_with("/info/lfs/objects/batch") || extract_lfs_object_oid(&path).is_some() {
+            lfs_request_log
+                .lock()
+                .unwrap()
+                .push(format!("{} {}", method, path));
+        }
 
         if path.ends_with("/info/lfs/objects/batch") && method == hyper::Method::POST {
             let lfs_store = lfs_store.clone();
