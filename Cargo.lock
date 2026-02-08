@@ -1331,6 +1331,7 @@ dependencies = [
  "predicates",
  "rcgen",
  "reqwest",
+ "ring",
  "rustls",
  "rustls-pemfile",
  "serde",

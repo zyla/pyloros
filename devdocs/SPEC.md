@@ -115,14 +115,33 @@ subcommands:
 The proxy can inject credentials (API keys, tokens) into outgoing requests so the agent never sees real secrets, preventing credential exfiltration.
 
 - Credentials are configured in `[[credentials]]` sections in the config file
-- Each credential specifies a URL pattern, a header name, and a header value
-- Values support `${ENV_VAR}` placeholders resolved at startup from environment variables
-- At request time (HTTPS/MITM path only), if a request URL matches a credential's URL pattern, the proxy injects/overwrites the specified header before forwarding upstream
+- Each credential has a `type` field: `"header"` (default if omitted) or `"aws-sigv4"`
+- All string values support `${ENV_VAR}` placeholders resolved at startup from environment variables
 - Credentials are **not** injected for plain HTTP requests (only HTTPS CONNECT tunnel)
+- The `validate-config` command displays credential count, types, and URL patterns (never secret values)
+- Credential secret values are never logged; only the type and match status are logged at debug level
+
+#### Header credentials (type = "header")
+
+Simple header injection/replacement — the original credential type.
+
+- Each credential specifies a URL pattern, a header name, and a header value
+- At request time, if a request URL matches, the proxy injects/overwrites the specified header before forwarding upstream
 - If multiple credentials match the same request and set the same header, last match wins (config file order)
 - Multiple credentials matching different headers on the same request all get injected
-- The `validate-config` command displays credential count and URL patterns (never values)
-- Credential header values are never logged; only the header name and match status are logged at debug level
+
+#### AWS SigV4 credentials (type = "aws-sigv4")
+
+Re-signs requests with real AWS credentials using AWS Signature Version 4. This allows AI agents to use fake AWS credentials while the proxy transparently re-signs with real ones.
+
+- Each credential specifies a URL pattern, `access_key_id`, `secret_access_key`, and optionally `session_token`
+- At request time, if a request URL matches, the proxy:
+  1. Parses the agent's existing `Authorization` header to extract the region and service from the credential scope
+  2. Strips old AWS auth headers (`Authorization`, `X-Amz-Date`, `X-Amz-Content-Sha256`, `X-Amz-Security-Token`)
+  3. Re-signs the request with the real credentials using SigV4
+  4. Sets the new `Authorization`, `X-Amz-Date`, `X-Amz-Content-Sha256`, and optionally `X-Amz-Security-Token` headers
+- The request body is fully buffered for signing (required by SigV4 which hashes the body)
+- If the original request has no parseable `Authorization` header (no region/service), the credential is skipped
 
 ## Technical Decisions
 
@@ -181,6 +200,8 @@ url = "https://github.com/myorg/agent-workspace"
 branches = ["feature/*", "fix/*"]
 
 # Credential injection — inject API keys/tokens into matching requests
+
+# Header credential (type defaults to "header" when omitted)
 [[credentials]]
 url = "https://api.anthropic.com/*"
 header = "x-api-key"
@@ -190,6 +211,14 @@ value = "${ANTHROPIC_API_KEY}"
 url = "https://api.openai.com/*"
 header = "authorization"
 value = "Bearer ${OPENAI_API_KEY}"
+
+# AWS SigV4 credential — re-signs requests with real AWS credentials
+[[credentials]]
+type = "aws-sigv4"
+url = "https://*.amazonaws.com/*"
+access_key_id = "${AWS_ACCESS_KEY_ID}"
+secret_access_key = "${AWS_SECRET_ACCESS_KEY}"
+# session_token = "${AWS_SESSION_TOKEN}"
 ```
 
 ## Testing

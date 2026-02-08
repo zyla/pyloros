@@ -203,9 +203,12 @@ impl TunnelHandler {
                     return Ok(git_blocked_push_response(&body_bytes, &blocked));
                 }
 
-                // Inject credentials
-                self.credential_engine
-                    .inject(&request_info, &mut parts.headers);
+                // Inject credentials (body already buffered)
+                self.credential_engine.inject_with_body(
+                    &request_info,
+                    &mut parts.headers,
+                    &body_bytes,
+                );
 
                 // Forward with the buffered body
                 let connect_port = self.upstream_port_override.unwrap_or(port);
@@ -328,6 +331,41 @@ impl TunnelHandler {
                 .inject(&request_info, &mut parts.headers);
             let req = Request::from_parts(parts, body);
             forward_websocket(
+                req,
+                connect_host,
+                connect_port,
+                host.to_string(),
+                self.upstream_tls_config.clone(),
+            )
+            .await
+        } else if self.credential_engine.needs_body(&request_info) {
+            // SigV4 credentials need the full body for signing.
+            // Set the upstream Host header BEFORE signing so the signature covers
+            // the final host value that the upstream server will see.
+            let (mut parts, body) = req.into_parts();
+            let upstream_host_value = if connect_port == 443 {
+                host.to_string()
+            } else {
+                format!("{}:{}", host, connect_port)
+            };
+            if let Ok(hv) = hyper::header::HeaderValue::from_str(&upstream_host_value) {
+                parts.headers.insert(hyper::header::HOST, hv);
+            }
+            let body_bytes = body
+                .collect()
+                .await
+                .map_err(|e| {
+                    tracing::error!(error = %e, "Failed to buffer request body for SigV4 signing");
+                    e
+                })?
+                .to_bytes();
+            self.credential_engine
+                .inject_with_body(&request_info, &mut parts.headers, &body_bytes);
+            let full_body = Full::new(body_bytes).map_err(|e| match e {}).boxed();
+            // Host already set, build request without rebuild_request_for_upstream
+            // to avoid double-setting it
+            let req = Request::from_parts(parts, full_body);
+            forward_request_boxed(
                 req,
                 connect_host,
                 connect_port,

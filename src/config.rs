@@ -25,15 +25,95 @@ pub struct Config {
     pub credentials: Vec<Credential>,
 }
 
-/// A credential to inject into matching outgoing requests
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Credential {
-    /// URL pattern to match (same syntax as rule URLs)
-    pub url: String,
-    /// Header name to inject/overwrite
-    pub header: String,
-    /// Header value (supports `${ENV_VAR}` placeholders)
-    pub value: String,
+/// A credential to inject into matching outgoing requests.
+///
+/// Two variants:
+/// - `Header`: injects/overwrites a single HTTP header (original behavior)
+/// - `AwsSigV4`: re-signs the request with real AWS credentials via SigV4
+#[derive(Debug, Clone, Serialize)]
+pub enum Credential {
+    Header {
+        url: String,
+        header: String,
+        value: String,
+    },
+    AwsSigV4 {
+        url: String,
+        access_key_id: String,
+        secret_access_key: String,
+        session_token: Option<String>,
+    },
+}
+
+impl Credential {
+    /// The URL pattern for this credential.
+    pub fn url(&self) -> &str {
+        match self {
+            Credential::Header { url, .. } => url,
+            Credential::AwsSigV4 { url, .. } => url,
+        }
+    }
+}
+
+/// Raw struct for deserializing credentials from TOML.
+/// Detects variant from optional `type` field (default: "header").
+#[derive(Deserialize)]
+struct CredentialRaw {
+    url: String,
+    #[serde(default)]
+    r#type: Option<String>,
+    // header fields
+    header: Option<String>,
+    value: Option<String>,
+    // aws-sigv4 fields
+    access_key_id: Option<String>,
+    secret_access_key: Option<String>,
+    session_token: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for Credential {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = CredentialRaw::deserialize(deserializer)?;
+        let cred_type = raw.r#type.as_deref().unwrap_or("header");
+        match cred_type {
+            "header" => {
+                let header = raw.header.ok_or_else(|| {
+                    serde::de::Error::custom("header credential requires `header` field")
+                })?;
+                let value = raw.value.ok_or_else(|| {
+                    serde::de::Error::custom("header credential requires `value` field")
+                })?;
+                Ok(Credential::Header {
+                    url: raw.url,
+                    header,
+                    value,
+                })
+            }
+            "aws-sigv4" => {
+                let access_key_id = raw.access_key_id.ok_or_else(|| {
+                    serde::de::Error::custom("aws-sigv4 credential requires `access_key_id` field")
+                })?;
+                let secret_access_key = raw.secret_access_key.ok_or_else(|| {
+                    serde::de::Error::custom(
+                        "aws-sigv4 credential requires `secret_access_key` field",
+                    )
+                })?;
+                Ok(Credential::AwsSigV4 {
+                    url: raw.url,
+                    access_key_id,
+                    secret_access_key,
+                    session_token: raw.session_token,
+                })
+            }
+            other => Err(serde::de::Error::custom(format!(
+                "unknown credential type {:?} — must be \"header\" or \"aws-sigv4\"",
+                other
+            ))),
+        }
+    }
 }
 
 /// Proxy-specific configuration
@@ -250,13 +330,29 @@ impl Config {
     fn validate_credential(index: usize, cred: &Credential) -> Result<()> {
         let ctx = |msg: &str| Error::config(format!("Credential #{}: {}", index + 1, msg));
 
-        if cred.header.is_empty() {
-            return Err(ctx("header name must not be empty"));
-        }
-
         // Validate URL pattern syntax
         use crate::filter::matcher::UrlPattern;
-        UrlPattern::new(&cred.url).map_err(|e| ctx(&format!("invalid URL pattern: {}", e)))?;
+        UrlPattern::new(cred.url()).map_err(|e| ctx(&format!("invalid URL pattern: {}", e)))?;
+
+        match cred {
+            Credential::Header { header, .. } => {
+                if header.is_empty() {
+                    return Err(ctx("header name must not be empty"));
+                }
+            }
+            Credential::AwsSigV4 {
+                access_key_id,
+                secret_access_key,
+                ..
+            } => {
+                if access_key_id.is_empty() {
+                    return Err(ctx("access_key_id must not be empty"));
+                }
+                if secret_access_key.is_empty() {
+                    return Err(ctx("secret_access_key must not be empty"));
+                }
+            }
+        }
 
         Ok(())
     }
@@ -677,18 +773,131 @@ value = "my-secret-key"
         t.assert_eq("credential count", &config.credentials.len(), &1usize);
         t.assert_eq(
             "url",
-            &config.credentials[0].url.as_str(),
+            &config.credentials[0].url(),
             &"https://api.example.com/*",
         );
-        t.assert_eq(
-            "header",
-            &config.credentials[0].header.as_str(),
-            &"x-api-key",
+        match &config.credentials[0] {
+            Credential::Header { header, value, .. } => {
+                t.assert_eq("header", &header.as_str(), &"x-api-key");
+                t.assert_eq("value", &value.as_str(), &"my-secret-key");
+            }
+            other => panic!("expected Header, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_credentials_backward_compat() {
+        let t = test_report!("Header credential without type field (backward compat)");
+        let toml = r#"
+[[credentials]]
+url = "https://api.example.com/*"
+header = "x-api-key"
+value = "my-secret-key"
+"#;
+        let config = Config::parse(toml).unwrap();
+        t.assert_true(
+            "parsed as Header",
+            matches!(&config.credentials[0], Credential::Header { .. }),
         );
-        t.assert_eq(
-            "value",
-            &config.credentials[0].value.as_str(),
-            &"my-secret-key",
+    }
+
+    #[test]
+    fn test_parse_credentials_explicit_header_type() {
+        let t = test_report!("Header credential with explicit type = header");
+        let toml = r#"
+[[credentials]]
+type = "header"
+url = "https://api.example.com/*"
+header = "x-api-key"
+value = "my-secret-key"
+"#;
+        let config = Config::parse(toml).unwrap();
+        t.assert_true(
+            "parsed as Header",
+            matches!(&config.credentials[0], Credential::Header { .. }),
+        );
+    }
+
+    #[test]
+    fn test_parse_aws_sigv4_credential() {
+        let t = test_report!("Parse AWS SigV4 credential");
+        let toml = r#"
+[[credentials]]
+type = "aws-sigv4"
+url = "https://*.amazonaws.com/*"
+access_key_id = "AKIAIOSFODNN7EXAMPLE"
+secret_access_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+session_token = "FwoGZXIvYXdzEBYaD..."
+"#;
+        let config = Config::parse(toml).unwrap();
+        t.assert_eq("credential count", &config.credentials.len(), &1usize);
+        match &config.credentials[0] {
+            Credential::AwsSigV4 {
+                url,
+                access_key_id,
+                secret_access_key,
+                session_token,
+            } => {
+                t.assert_eq("url", &url.as_str(), &"https://*.amazonaws.com/*");
+                t.assert_eq("key", &access_key_id.as_str(), &"AKIAIOSFODNN7EXAMPLE");
+                t.assert_eq(
+                    "secret",
+                    &secret_access_key.as_str(),
+                    &"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+                );
+                t.assert_eq(
+                    "token",
+                    &session_token.as_deref(),
+                    &Some("FwoGZXIvYXdzEBYaD..."),
+                );
+            }
+            other => panic!("expected AwsSigV4, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_aws_sigv4_no_session_token() {
+        let t = test_report!("AWS SigV4 credential without session_token");
+        let toml = r#"
+[[credentials]]
+type = "aws-sigv4"
+url = "https://*.amazonaws.com/*"
+access_key_id = "AKIAIOSFODNN7EXAMPLE"
+secret_access_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+"#;
+        let config = Config::parse(toml).unwrap();
+        match &config.credentials[0] {
+            Credential::AwsSigV4 { session_token, .. } => {
+                t.assert_true("no session token", session_token.is_none());
+            }
+            other => panic!("expected AwsSigV4, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_mixed_credentials() {
+        let t = test_report!("Mixed header and aws-sigv4 credentials");
+        let toml = r#"
+[[credentials]]
+url = "https://api.example.com/*"
+header = "x-api-key"
+value = "my-secret"
+
+[[credentials]]
+type = "aws-sigv4"
+url = "https://*.amazonaws.com/*"
+access_key_id = "AKID"
+secret_access_key = "SECRET"
+"#;
+        let config = Config::parse(toml).unwrap();
+        t.assert_eq("credential count", &config.credentials.len(), &2usize);
+        t.assert_true(
+            "first is Header",
+            matches!(&config.credentials[0], Credential::Header { .. }),
+        );
+        t.assert_true(
+            "second is AwsSigV4",
+            matches!(&config.credentials[1], Credential::AwsSigV4 { .. }),
         );
     }
 
@@ -727,6 +936,47 @@ value = "secret"
         t.assert_true("parse error", result.is_err());
         let err = result.unwrap_err().to_string();
         t.assert_contains("error mentions URL pattern", &err, "URL pattern");
+    }
+
+    #[test]
+    fn test_credential_reject_unknown_type() {
+        let t = test_report!("Reject credential with unknown type");
+        let toml = r#"
+[[credentials]]
+type = "oauth2"
+url = "https://api.example.com/*"
+"#;
+        let result = Config::parse(toml);
+        t.assert_true("parse error", result.is_err());
+    }
+
+    #[test]
+    fn test_credential_reject_aws_empty_access_key() {
+        let t = test_report!("Reject aws-sigv4 credential with empty access_key_id");
+        let toml = r#"
+[[credentials]]
+type = "aws-sigv4"
+url = "https://*.amazonaws.com/*"
+access_key_id = ""
+secret_access_key = "SECRET"
+"#;
+        let result = Config::parse(toml);
+        t.assert_true("parse error", result.is_err());
+        let err = result.unwrap_err().to_string();
+        t.assert_contains("mentions access_key_id", &err, "access_key_id");
+    }
+
+    #[test]
+    fn test_credential_reject_aws_missing_secret() {
+        let t = test_report!("Reject aws-sigv4 credential missing secret_access_key");
+        let toml = r#"
+[[credentials]]
+type = "aws-sigv4"
+url = "https://*.amazonaws.com/*"
+access_key_id = "AKID"
+"#;
+        let result = Config::parse(toml);
+        t.assert_true("parse error", result.is_err());
     }
 
     #[test]
