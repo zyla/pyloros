@@ -45,21 +45,32 @@ else
     exit 0
 fi
 
-# Find the redlimitador binary (handles worktree where target/ is in the main repo)
+# Find the redlimitador binary: check PROJECT_DIR first, then the main git worktree
 BINARY=""
-for candidate in \
-    "$PROJECT_DIR/target/x86_64-unknown-linux-musl/release/redlimitador" \
-    "$PROJECT_DIR/target/release/redlimitador" \
-    "$PROJECT_DIR/target/debug/redlimitador"; do
-    if [[ -x "$candidate" ]]; then
-        BINARY="$candidate"
-        break
-    fi
+MAIN_WORKTREE="$(git -C "$PROJECT_DIR" worktree list --porcelain | head -1 | sed 's/^worktree //')"
+for search_dir in "$PROJECT_DIR" "$MAIN_WORKTREE"; do
+    for candidate in \
+        "$search_dir/target/x86_64-unknown-linux-musl/release/redlimitador" \
+        "$search_dir/target/release/redlimitador" \
+        "$search_dir/target/debug/redlimitador"; do
+        if [[ -x "$candidate" ]]; then
+            BINARY="$candidate"
+            break 2
+        fi
+    done
 done
 if [[ -z "$BINARY" ]]; then
     echo "Cannot find redlimitador binary. Run 'cargo build' first."
     exit 1
 fi
+
+# Build test image with curl and git pre-installed
+SANDBOX_IMAGE="rl-compose-test:latest"
+echo "Building test image..."
+docker build -t "$SANDBOX_IMAGE" -f - . <<'DOCKERFILE'
+FROM alpine:latest
+RUN apk add --no-cache curl git
+DOCKERFILE
 
 # Generate CA certs to a temp directory
 CA_DIR="$(mktemp -d)"
@@ -69,7 +80,7 @@ echo "Generating CA certificate..."
 
 # Use a unique project name for isolation
 COMPOSE_PROJECT_NAME="rl-compose-test-$$"
-export COMPOSE_PROJECT_NAME BINARY CA_DIR
+export COMPOSE_PROJECT_NAME BINARY CA_DIR SANDBOX_IMAGE
 
 # Compose helper — runs compose with our file and project name
 dc() {
@@ -94,9 +105,6 @@ echo ""
 # Start services
 echo "Starting services (project: $COMPOSE_PROJECT_NAME)..."
 dc up -d 2>&1
-
-echo "Installing curl and git in sandbox..."
-dc exec -T sandbox apk add --no-cache curl git >/dev/null 2>&1
 
 # Helper: run a command in the sandbox container
 sandbox_exec() {

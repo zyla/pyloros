@@ -58,7 +58,7 @@ services:
       start_period: 5s
 
   sandbox:
-    image: alpine:latest
+    image: ${SANDBOX_IMAGE:-alpine:latest}
     command: sleep infinity
     depends_on:
       proxy:
