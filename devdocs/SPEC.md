@@ -130,6 +130,12 @@ Binary-level smoke tests spawn the actual `redlimitador` binary and drive it wit
 
 Binary-level tests that send real requests to external APIs (e.g. `api.anthropic.com`) through the proxy, verifying the full MITM TLS pipeline against production servers. These tests require the `claude` CLI to be installed and authenticated (OAuth credentials at `~/.claude/.credentials.json`) and are skipped when either is unavailable (e.g. in CI).
 
+### Mutation Testing
+
+Periodic mutation testing with `cargo-mutants` validates test suite quality. The goal is to kill all viable mutants for core logic (filtering, header manipulation, protocol handling). Surviving mutants in logging/debug/cosmetic code are acceptable.
+
+When adding new code paths with conditional logic (especially `if`, `match`, `==`/`!=`), ensure tests exercise both branches. Default-port matching, header presence checks, and error classification are common sources of surviving mutants.
+
 ### Test Report Generation
 
 Tests produce a human-readable report showing, for each test: what was done, what the result was, and what assertions were checked. The report is tightly coupled to actual test execution — descriptions are derived from real parameters (URLs, rules, CLI args), making drift between tests and report impossible.

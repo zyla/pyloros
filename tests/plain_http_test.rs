@@ -1,6 +1,7 @@
 mod common;
 
 use common::{rule, test_client, TestCa, TestProxy};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use wiremock::{matchers::any, Mock, MockServer, ResponseTemplate};
 
 // ---------------------------------------------------------------------------
@@ -164,6 +165,87 @@ async fn test_http_post_with_body() {
     let req = &received[0];
     assert_eq!(req.method.as_str(), "POST");
     assert_eq!(req.body, b"hello from client");
+
+    proxy.shutdown();
+}
+
+/// When the client does not send a Host header, the proxy constructs one
+/// in the format `host:port` for non-80 ports.
+#[tokio::test]
+async fn test_host_header_constructed_when_absent() {
+    let t = test_report!("Host header constructed when client omits it");
+
+    let ca = TestCa::generate();
+    let upstream = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+        .mount(&upstream)
+        .await;
+
+    let port = upstream.address().port();
+    let proxy = TestProxy::start(&ca, vec![rule("GET", "http://localhost/*")], port).await;
+
+    // Send a raw HTTP request through the proxy *without* a Host header.
+    // reqwest always adds Host, so we use a raw TCP stream.
+    let mut stream = tokio::net::TcpStream::connect(proxy.addr()).await.unwrap();
+    let raw_request = format!("GET http://localhost:{}/host-test HTTP/1.1\r\n\r\n", port);
+    stream.write_all(raw_request.as_bytes()).await.unwrap();
+
+    let mut buf = vec![0u8; 4096];
+    let n = stream.read(&mut buf).await.unwrap();
+    let response = String::from_utf8_lossy(&buf[..n]);
+    t.assert_true("Response contains 200", response.contains("200"));
+
+    // Verify upstream received a constructed Host header
+    let received = upstream.received_requests().await.unwrap();
+    t.assert_eq("Request count", &received.len(), &1usize);
+    let req = &received[0];
+    let host_value = req.headers.get("host").unwrap().to_str().unwrap();
+    let expected_host = format!("localhost:{}", port);
+    t.assert_eq(
+        "Constructed Host header",
+        &host_value,
+        &expected_host.as_str(),
+    );
+
+    proxy.shutdown();
+}
+
+/// When the client sends an explicit Host header, the proxy preserves it
+/// and does NOT overwrite it with a constructed one.
+#[tokio::test]
+async fn test_host_header_preserved_when_present() {
+    let t = test_report!("Client-provided Host header preserved by proxy");
+
+    let ca = TestCa::generate();
+    let upstream = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+        .mount(&upstream)
+        .await;
+
+    let port = upstream.address().port();
+    let proxy = TestProxy::start(&ca, vec![rule("GET", "http://localhost/*")], port).await;
+
+    // Send a raw HTTP request with an explicit custom Host header
+    let mut stream = tokio::net::TcpStream::connect(proxy.addr()).await.unwrap();
+    let raw_request = format!(
+        "GET http://localhost:{}/host-test HTTP/1.1\r\nHost: custom.example.com\r\n\r\n",
+        port
+    );
+    stream.write_all(raw_request.as_bytes()).await.unwrap();
+
+    let mut buf = vec![0u8; 4096];
+    let n = stream.read(&mut buf).await.unwrap();
+    let response = String::from_utf8_lossy(&buf[..n]);
+    t.assert_true("Response contains 200", response.contains("200"));
+
+    // Verify upstream received the original Host header, not a constructed one
+    let received = upstream.received_requests().await.unwrap();
+    t.assert_eq("Request count", &received.len(), &1usize);
+    let req = &received[0];
+    let host_value = req.headers.get("host").unwrap().to_str().unwrap();
+    t.assert_eq("Preserved Host header", &host_value, &"custom.example.com");
 
     proxy.shutdown();
 }

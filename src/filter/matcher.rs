@@ -422,6 +422,24 @@ mod tests {
         }
 
         #[test]
+        fn test_default_port_http() {
+            let t = test_report!("URL pattern with default port 80 for HTTP");
+            let p = UrlPattern::new("http://example.com:80/api").unwrap();
+            t.assert_true(
+                "None matches default 80",
+                p.matches("http", "example.com", None, "/api", None),
+            );
+            t.assert_true(
+                "explicit 80",
+                p.matches("http", "example.com", Some(80), "/api", None),
+            );
+            t.assert_true(
+                "wrong scheme rejected",
+                !p.matches("https", "example.com", None, "/api", None),
+            );
+        }
+
+        #[test]
         fn test_with_query() {
             let t = test_report!("URL pattern with query wildcards");
             let p = UrlPattern::new("https://api.com/search?q=*&limit=*").unwrap();
