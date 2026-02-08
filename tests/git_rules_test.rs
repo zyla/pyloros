@@ -434,6 +434,100 @@ async fn test_git_push_branch_blocked() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_git_push_branch_blocked_shows_error_message() {
+    let backend_path = git_http_backend_path();
+
+    let t = test_report!("Branch-restricted push shows clear error message via git protocol");
+    let ca = TestCa::generate();
+    t.setup("Generated test CA");
+
+    let tmp = TempDir::new().unwrap();
+    let repos_dir = create_test_repo(tmp.path(), "repo.git");
+    let bare_repo = repos_dir.join("repo.git");
+    run_git(&["config", "http.receivepack", "true"], &bare_repo);
+    t.setup("Created test repo with receivepack enabled");
+
+    let request_log: RequestLog = Arc::new(Mutex::new(Vec::new()));
+
+    let upstream = TestUpstream::start_reported(
+        &t,
+        &ca,
+        git_cgi_handler(backend_path, repos_dir, request_log.clone()),
+        "git http-backend CGI",
+    )
+    .await;
+
+    // Allow all git ops, but push only to feature/* branches
+    let proxy = TestProxy::start_reported(
+        &t,
+        &ca,
+        vec![git_rule_with_branches(
+            "*",
+            "https://localhost/*",
+            &["feature/*"],
+        )],
+        upstream.port(),
+    )
+    .await;
+
+    let proxy_url = format!("http://127.0.0.1:{}", proxy.addr().port());
+
+    // Clone
+    let clone_dir = tmp.path().join("cloned");
+    let output = run_command_reported(
+        &t,
+        std::process::Command::new("git")
+            .args([
+                "clone",
+                "https://localhost/repo.git",
+                clone_dir.to_str().unwrap(),
+            ])
+            .env("HTTPS_PROXY", &proxy_url)
+            .env("GIT_SSL_CAINFO", &ca.cert_path)
+            .env("GIT_TERMINAL_PROMPT", "0"),
+    );
+    t.assert_eq("git clone succeeds", &output.status.code().unwrap(), &0);
+
+    // Commit on main and try to push — should be blocked with clear message
+    run_git(&["config", "user.email", "test@test.com"], &clone_dir);
+    run_git(&["config", "user.name", "Test User"], &clone_dir);
+    std::fs::write(clone_dir.join("blocked.txt"), "should not arrive\n").unwrap();
+    run_git(&["add", "blocked.txt"], &clone_dir);
+    run_git(
+        &["commit", "-m", "Push to main (should be blocked)"],
+        &clone_dir,
+    );
+    t.action("Created commit on main branch");
+
+    let output = run_command_reported(
+        &t,
+        std::process::Command::new("git")
+            .args(["push", "origin", "main"])
+            .current_dir(&clone_dir)
+            .env("HTTPS_PROXY", &proxy_url)
+            .env("GIT_SSL_CAINFO", &ca.cert_path)
+            .env("GIT_TERMINAL_PROMPT", "0"),
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    t.assert_true(
+        "git push fails (branch blocked)",
+        output.status.code().unwrap() != 0,
+    );
+    t.assert_true(
+        "stderr contains 'blocked by proxy policy'",
+        stderr.contains("blocked by proxy policy"),
+    );
+    t.assert_true(
+        "stderr contains 'remote rejected'",
+        stderr.contains("remote rejected"),
+    );
+
+    proxy.shutdown();
+    upstream.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_git_branch_restricted_rule_blocked_on_plain_http() {
     let t = test_report!("Branch-restricted git rule blocks plain HTTP (can't inspect body)");
     let ca = TestCa::generate();

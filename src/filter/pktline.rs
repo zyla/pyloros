@@ -117,7 +117,8 @@ pub fn build_receive_pack_error(
     message: &str,
     capabilities: &HashSet<String>,
 ) -> Vec<u8> {
-    let has_report_status = capabilities.contains("report-status");
+    let has_report_status =
+        capabilities.contains("report-status") || capabilities.contains("report-status-v2");
     let has_sideband = capabilities.contains("side-band-64k");
 
     if has_report_status && has_sideband {
@@ -132,6 +133,8 @@ pub fn build_receive_pack_error(
         result.extend(b"0000");
         result
     } else {
+        // No report-status or sideband: can't communicate error through protocol.
+        // Return empty body (git will see an error from the HTTP side).
         Vec::new()
     }
 }
@@ -144,23 +147,23 @@ pub fn build_receive_pack_error(
 fn build_sideband_report_status(blocked: &[String], message: &str) -> Vec<u8> {
     let mut result = Vec::new();
 
-    // Band 2: stderr message
+    // Band 2: stderr message (displayed to user as "remote: ...")
     let stderr_msg = format!("redlimitador: {}\n", message);
     result.extend(format_sideband_pktline(2, stderr_msg.as_bytes()));
 
-    // Build the inner report-status payload
+    // Build the entire report-status buffer (inner pkt-lines + inner flush)
     let mut report = Vec::new();
     report.extend(format_pktline(b"unpack ok\n"));
     for refname in blocked {
         let ng_line = format!("ng {} blocked by proxy policy\n", refname);
         report.extend(format_pktline(ng_line.as_bytes()));
     }
-    report.extend(b"0000");
+    report.extend(b"0000"); // inner flush (part of report-status)
 
-    // Band 1: report-status data
+    // Band 1: entire report-status buffer as one sideband packet
     result.extend(format_sideband_pktline(1, &report));
 
-    // Outer flush
+    // Outer flush (terminates sideband stream)
     result.extend(b"0000");
 
     result
@@ -723,5 +726,30 @@ mod tests {
             "contains ng for develop",
             result_str.contains("ng refs/heads/develop blocked by proxy policy"),
         );
+    }
+
+    #[test]
+    fn test_build_error_with_report_status_v2() {
+        let t = test_report!("build_receive_pack_error recognizes report-status-v2");
+        let blocked = vec!["refs/heads/main".to_string()];
+        let mut caps = HashSet::new();
+        caps.insert("report-status-v2".to_string());
+        caps.insert("side-band-64k".to_string());
+
+        let result = build_receive_pack_error(
+            &blocked,
+            "push to branch 'main' blocked by proxy policy",
+            &caps,
+        );
+
+        let result_str = String::from_utf8_lossy(&result);
+        // Should produce sideband-wrapped report-status (same as v1)
+        t.assert_true("contains message", result_str.contains("redlimitador:"));
+        t.assert_true("contains unpack ok", result_str.contains("unpack ok"));
+        t.assert_true(
+            "contains ng line",
+            result_str.contains("ng refs/heads/main blocked by proxy policy"),
+        );
+        t.assert_true("ends with flush", result_str.ends_with("0000"));
     }
 }
