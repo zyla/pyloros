@@ -12,8 +12,6 @@ The intended deployment is one proxy per VM/container running an AI agent. All o
 
 ## Features
 
-> **Status convention:** All features are implemented and tested unless marked with `(planned)`. Remove the marker once implemented. Agents: scan for `(planned)` to find remaining work.
-
 ### Core
 - Explicit HTTP proxy mode (clients configured via `HTTP_PROXY`/`HTTPS_PROXY` env vars)
 - MITM TLS interception for HTTPS traffic via CONNECT tunnels
