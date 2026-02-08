@@ -1,4 +1,4 @@
-//! Redlimitador - A filtering HTTPS proxy for agent network access control
+//! Pyloros - A filtering HTTPS proxy for agent network access control
 //!
 //! This crate provides a filtering proxy that intercepts HTTPS traffic and applies
 //! allowlist-based rules to control network access.

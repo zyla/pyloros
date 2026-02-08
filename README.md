@@ -1,10 +1,10 @@
-# Redlimitador
+# Pyloros
 
 A default-deny allowlist-based HTTPS filtering proxy for controlling AI agent network access.
 
 ## Overview
 
-Redlimitador is an HTTP/HTTPS proxy that blocks all network requests by default and only allows traffic matching explicit allowlist rules. It is designed for environments where AI agents need controlled internet access — the proxy intercepts HTTPS traffic via MITM TLS, inspects the full URL (host, path, query), and enforces method-level allowlist rules.
+Pyloros is an HTTP/HTTPS proxy that blocks all network requests by default and only allows traffic matching explicit allowlist rules. It is designed for environments where AI agents need controlled internet access — the proxy intercepts HTTPS traffic via MITM TLS, inspects the full URL (host, path, query), and enforces method-level allowlist rules.
 
 The intended deployment is **one proxy per VM or container** running an AI agent. All outbound traffic is routed through the proxy via standard `HTTP_PROXY`/`HTTPS_PROXY` environment variables, giving full visibility and control over the agent's network access.
 

@@ -1,4 +1,4 @@
-//! Redlimitador CLI - A filtering HTTPS proxy for agent network access control
+//! Pyloros CLI - A filtering HTTPS proxy for agent network access control
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;

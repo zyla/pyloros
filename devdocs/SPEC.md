@@ -1,4 +1,4 @@
-# Redlimitador Spec
+# Pyloros Spec
 
 A default-deny allowlist-based HTTPS filtering proxy for controlling AI agent network access.
 

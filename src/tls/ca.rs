@@ -28,10 +28,10 @@ impl GeneratedCa {
         // Set distinguished name
         params
             .distinguished_name
-            .push(DnType::CommonName, "Redlimitador Proxy CA");
+            .push(DnType::CommonName, "Pyloros Proxy CA");
         params
             .distinguished_name
-            .push(DnType::OrganizationName, "Redlimitador");
+            .push(DnType::OrganizationName, "Pyloros");
 
         // This is a CA certificate
         params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
