@@ -273,13 +273,10 @@ async fn test_binary_allowed_get_returns_200() {
     let t = test_report!("Binary: allowed HTTPS GET returns 200 (with auth)");
 
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start_reported(
-        &t,
-        &ca,
-        ok_handler("hello binary"),
-        "returns 'hello binary'",
-    )
-    .await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("hello binary"))
+        .report(&t, "returns 'hello binary'")
+        .start()
+        .await;
 
     let tmp = TempDir::new().unwrap();
     let config_path = tmp.path().join("config.toml");
@@ -320,13 +317,10 @@ async fn test_binary_blocked_request_returns_451() {
     let t = test_report!("Binary: blocked HTTPS request returns 451 (with auth)");
 
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start_reported(
-        &t,
-        &ca,
-        ok_handler("should not reach"),
-        "returns 'should not reach'",
-    )
-    .await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("should not reach"))
+        .report(&t, "returns 'should not reach'")
+        .start()
+        .await;
 
     let tmp = TempDir::new().unwrap();
     let config_path = tmp.path().join("config.toml");

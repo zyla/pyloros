@@ -12,14 +12,17 @@ async fn test_h2_allowed_request() {
     let t = test_report!("HTTP/2 allowed request");
 
     let ca = TestCa::generate();
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, ok_handler("h2 hello"), "returns 'h2 hello'").await;
-    let proxy = TestProxy::start_reported(
-        &t,
+    let upstream = TestUpstream::builder(&ca, ok_handler("h2 hello"))
+        .report(&t, "returns 'h2 hello'")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(
         &ca,
         vec![rule("GET", "https://localhost/*")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
@@ -47,15 +50,17 @@ async fn test_h1_client_to_h2_upstream() {
     let t = test_report!("H1 client to H2 upstream protocol translation");
 
     let ca = TestCa::generate();
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, ok_handler("translated"), "returns 'translated'")
-            .await;
-    let proxy = TestProxy::start_reported(
-        &t,
+    let upstream = TestUpstream::builder(&ca, ok_handler("translated"))
+        .report(&t, "returns 'translated'")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(
         &ca,
         vec![rule("GET", "https://localhost/*")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new_h1_only(&t, proxy.addr(), &ca);
@@ -83,15 +88,18 @@ async fn test_h2_client_to_h1_upstream() {
     let t = test_report!("H2 client to H1-only upstream protocol translation");
 
     let ca = TestCa::generate();
-    let upstream =
-        TestUpstream::start_h1_only_reported(&t, &ca, ok_handler("h1 only"), "returns 'h1 only'")
-            .await;
-    let proxy = TestProxy::start_reported(
-        &t,
+    let upstream = TestUpstream::builder(&ca, ok_handler("h1 only"))
+        .h1_only()
+        .report(&t, "returns 'h1 only'")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(
         &ca,
         vec![rule("GET", "https://localhost/*")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
@@ -119,19 +127,17 @@ async fn test_h2_blocked_returns_451() {
     let t = test_report!("Blocked request over HTTP/2 returns 451");
 
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start_reported(
-        &t,
-        &ca,
-        ok_handler("should not reach"),
-        "returns 'should not reach'",
-    )
-    .await;
-    let proxy = TestProxy::start_reported(
-        &t,
+    let upstream = TestUpstream::builder(&ca, ok_handler("should not reach"))
+        .report(&t, "returns 'should not reach'")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(
         &ca,
         vec![rule("GET", "https://example.com/*")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
@@ -178,13 +184,17 @@ async fn test_h2_large_body() {
         })
     });
 
-    let upstream = TestUpstream::start_reported(&t, &ca, handler, "returns 100KB body").await;
-    let proxy = TestProxy::start_reported(
-        &t,
+    let upstream = TestUpstream::builder(&ca, handler)
+        .report(&t, "returns 100KB body")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(
         &ca,
         vec![rule("GET", "https://localhost/*")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);

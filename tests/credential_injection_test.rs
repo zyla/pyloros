@@ -18,14 +18,19 @@ fn cred(url: &str, header: &str, value: &str) -> Credential {
 async fn test_credential_injected_for_matching_https() {
     let t = test_report!("Credential injected for matching HTTPS request");
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start_reported(&t, &ca, echo_handler(), "echo").await;
-    let proxy = TestProxy::start_with_credentials(
-        &ca,
-        vec![rule("*", "https://localhost/*")],
-        vec![cred("https://localhost/*", "x-api-key", "real-secret")],
-        upstream.port(),
-    )
-    .await;
+    let upstream = TestUpstream::builder(&ca, echo_handler())
+        .report(&t, "echo")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(&ca, vec![rule("*", "https://localhost/*")], upstream.port())
+        .credentials(vec![cred(
+            "https://localhost/*",
+            "x-api-key",
+            "real-secret",
+        )])
+        .report(&t)
+        .start()
+        .await;
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
 
     let resp = client.get("https://localhost/test").await;
@@ -40,14 +45,19 @@ async fn test_credential_injected_for_matching_https() {
 async fn test_credential_overwrites_existing_header() {
     let t = test_report!("Credential overwrites existing header");
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start_reported(&t, &ca, echo_handler(), "echo").await;
-    let proxy = TestProxy::start_with_credentials(
-        &ca,
-        vec![rule("*", "https://localhost/*")],
-        vec![cred("https://localhost/*", "x-api-key", "real-secret")],
-        upstream.port(),
-    )
-    .await;
+    let upstream = TestUpstream::builder(&ca, echo_handler())
+        .report(&t, "echo")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(&ca, vec![rule("*", "https://localhost/*")], upstream.port())
+        .credentials(vec![cred(
+            "https://localhost/*",
+            "x-api-key",
+            "real-secret",
+        )])
+        .report(&t)
+        .start()
+        .await;
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
 
     let resp = client
@@ -65,18 +75,19 @@ async fn test_credential_overwrites_existing_header() {
 async fn test_credential_authorization_bearer() {
     let t = test_report!("Credential with Authorization Bearer format");
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start_reported(&t, &ca, echo_handler(), "echo").await;
-    let proxy = TestProxy::start_with_credentials(
-        &ca,
-        vec![rule("*", "https://localhost/*")],
-        vec![cred(
+    let upstream = TestUpstream::builder(&ca, echo_handler())
+        .report(&t, "echo")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(&ca, vec![rule("*", "https://localhost/*")], upstream.port())
+        .credentials(vec![cred(
             "https://localhost/*",
             "authorization",
             "Bearer real-token",
-        )],
-        upstream.port(),
-    )
-    .await;
+        )])
+        .report(&t)
+        .start()
+        .await;
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
 
     let resp = client.get("https://localhost/test").await;
@@ -91,18 +102,19 @@ async fn test_credential_authorization_bearer() {
 async fn test_no_injection_for_non_matching_url() {
     let t = test_report!("No injection for non-matching URL");
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start_reported(&t, &ca, echo_handler(), "echo").await;
-    let proxy = TestProxy::start_with_credentials(
-        &ca,
-        vec![rule("*", "https://localhost/*")],
-        vec![cred(
+    let upstream = TestUpstream::builder(&ca, echo_handler())
+        .report(&t, "echo")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(&ca, vec![rule("*", "https://localhost/*")], upstream.port())
+        .credentials(vec![cred(
             "https://other.example.com/*",
             "x-api-key",
             "should-not-appear",
-        )],
-        upstream.port(),
-    )
-    .await;
+        )])
+        .report(&t)
+        .start()
+        .await;
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
 
     let resp = client.get("https://localhost/test").await;
@@ -117,17 +129,18 @@ async fn test_no_injection_for_non_matching_url() {
 async fn test_multiple_credentials_different_headers() {
     let t = test_report!("Multiple credentials for different headers both injected");
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start_reported(&t, &ca, echo_handler(), "echo").await;
-    let proxy = TestProxy::start_with_credentials(
-        &ca,
-        vec![rule("*", "https://localhost/*")],
-        vec![
+    let upstream = TestUpstream::builder(&ca, echo_handler())
+        .report(&t, "echo")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(&ca, vec![rule("*", "https://localhost/*")], upstream.port())
+        .credentials(vec![
             cred("https://localhost/*", "x-api-key", "key123"),
             cred("https://localhost/*", "x-custom", "custom-val"),
-        ],
-        upstream.port(),
-    )
-    .await;
+        ])
+        .report(&t)
+        .start()
+        .await;
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
 
     let resp = client.get("https://localhost/test").await;
@@ -143,15 +156,16 @@ async fn test_multiple_credentials_different_headers() {
 async fn test_credential_not_injected_for_blocked_request() {
     let t = test_report!("Credential not injected for blocked request");
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start_reported(&t, &ca, echo_handler(), "echo").await;
+    let upstream = TestUpstream::builder(&ca, echo_handler())
+        .report(&t, "echo")
+        .start()
+        .await;
     // No rules → everything blocked
-    let proxy = TestProxy::start_with_credentials(
-        &ca,
-        vec![],
-        vec![cred("https://localhost/*", "x-api-key", "secret")],
-        upstream.port(),
-    )
-    .await;
+    let proxy = TestProxy::builder(&ca, vec![], upstream.port())
+        .credentials(vec![cred("https://localhost/*", "x-api-key", "secret")])
+        .report(&t)
+        .start()
+        .await;
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
 
     let resp = client.get("https://localhost/test").await;
@@ -176,16 +190,17 @@ async fn test_no_injection_over_plain_http() {
     let plain_port = upstream.address().port();
 
     // Proxy with credential and an HTTP rule that allows the request
-    let proxy = TestProxy::start_with_credentials(
+    let proxy = TestProxy::builder(
         &ca,
         vec![rule("*", &format!("http://localhost:{}/*", plain_port))],
-        vec![cred(
-            &format!("http://localhost:{}/*", plain_port),
-            "x-api-key",
-            "should-not-inject",
-        )],
         plain_port,
     )
+    .credentials(vec![cred(
+        &format!("http://localhost:{}/*", plain_port),
+        "x-api-key",
+        "should-not-inject",
+    )])
+    .start()
     .await;
 
     let client = ReportingClient::new_plain(&t, proxy.addr());
@@ -210,18 +225,19 @@ async fn test_credential_with_env_var() {
     std::env::set_var("TEST_CRED_E2E_SECRET", "env-resolved-value");
 
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start_reported(&t, &ca, echo_handler(), "echo").await;
-    let proxy = TestProxy::start_with_credentials(
-        &ca,
-        vec![rule("*", "https://localhost/*")],
-        vec![cred(
+    let upstream = TestUpstream::builder(&ca, echo_handler())
+        .report(&t, "echo")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(&ca, vec![rule("*", "https://localhost/*")], upstream.port())
+        .credentials(vec![cred(
             "https://localhost/*",
             "x-api-key",
             "${TEST_CRED_E2E_SECRET}",
-        )],
-        upstream.port(),
-    )
-    .await;
+        )])
+        .report(&t)
+        .start()
+        .await;
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
 
     let resp = client.get("https://localhost/test").await;

@@ -28,20 +28,21 @@ async fn test_git_clone_through_proxy() {
 
     let request_log: RequestLog = Arc::new(Mutex::new(Vec::new()));
 
-    let upstream = TestUpstream::start_reported(
-        &t,
+    let upstream = TestUpstream::builder(
         &ca,
         git_cgi_handler(backend_path, repos_dir, request_log.clone()),
-        "git http-backend CGI",
     )
+    .report(&t, "git http-backend CGI")
+    .start()
     .await;
 
-    let proxy = TestProxy::start_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![git_rule("fetch", "https://localhost/*")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let clone_dir = tmp.path().join("cloned");
@@ -121,16 +122,15 @@ async fn test_git_push_through_proxy() {
 
     let request_log: RequestLog = Arc::new(Mutex::new(Vec::new()));
 
-    let upstream = TestUpstream::start_reported(
-        &t,
+    let upstream = TestUpstream::builder(
         &ca,
         git_cgi_handler(backend_path, repos_dir, request_log.clone()),
-        "git http-backend CGI",
     )
+    .report(&t, "git http-backend CGI")
+    .start()
     .await;
 
-    let proxy = TestProxy::start_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![
             git_rule("fetch", "https://localhost/*"),
@@ -138,6 +138,8 @@ async fn test_git_push_through_proxy() {
         ],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let proxy_url = format!("http://127.0.0.1:{}", proxy.addr().port());

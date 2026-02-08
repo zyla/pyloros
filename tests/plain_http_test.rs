@@ -22,8 +22,10 @@ async fn test_http_allowed_get_returns_200() {
         .await;
 
     let port = upstream.address().port();
-    let proxy =
-        TestProxy::start_reported(&t, &ca, vec![rule("GET", "http://localhost/*")], port).await;
+    let proxy = TestProxy::builder(&ca, vec![rule("GET", "http://localhost/*")], port)
+        .report(&t)
+        .start()
+        .await;
 
     let client = ReportingClient::new_plain(&t, proxy.addr());
     let url = format!("http://localhost:{}/test", port);
@@ -51,8 +53,10 @@ async fn test_http_blocked_request_returns_451() {
 
     let port = upstream.address().port();
     // Rule only allows example.com, not localhost
-    let proxy =
-        TestProxy::start_reported(&t, &ca, vec![rule("GET", "http://example.com/*")], port).await;
+    let proxy = TestProxy::builder(&ca, vec![rule("GET", "http://example.com/*")], port)
+        .report(&t)
+        .start()
+        .await;
 
     let client = ReportingClient::new_plain(&t, proxy.addr());
     let url = format!("http://localhost:{}/blocked", port);
@@ -87,8 +91,10 @@ async fn test_http_headers_forwarded() {
         .await;
 
     let port = upstream.address().port();
-    let proxy =
-        TestProxy::start_reported(&t, &ca, vec![rule("GET", "http://localhost/*")], port).await;
+    let proxy = TestProxy::builder(&ca, vec![rule("GET", "http://localhost/*")], port)
+        .report(&t)
+        .start()
+        .await;
 
     let client = ReportingClient::new_plain(&t, proxy.addr());
     let url = format!("http://localhost:{}/headers", port);
@@ -138,9 +144,10 @@ async fn test_http_upstream_down_returns_502() {
     drop(listener);
 
     t.setup("Upstream: dead port (nothing listening)");
-    let proxy =
-        TestProxy::start_reported(&t, &ca, vec![rule("GET", "http://localhost/*")], dead_port)
-            .await;
+    let proxy = TestProxy::builder(&ca, vec![rule("GET", "http://localhost/*")], dead_port)
+        .report(&t)
+        .start()
+        .await;
 
     let client = ReportingClient::new_plain(&t, proxy.addr());
     let url = format!("http://localhost:{}/gone", dead_port);
@@ -165,8 +172,10 @@ async fn test_http_post_with_body() {
         .await;
 
     let port = upstream.address().port();
-    let proxy =
-        TestProxy::start_reported(&t, &ca, vec![rule("POST", "http://localhost/*")], port).await;
+    let proxy = TestProxy::builder(&ca, vec![rule("POST", "http://localhost/*")], port)
+        .report(&t)
+        .start()
+        .await;
 
     let client = ReportingClient::new_plain(&t, proxy.addr());
     let url = format!("http://localhost:{}/submit", port);
@@ -207,7 +216,9 @@ async fn test_host_header_constructed_when_absent() {
         .await;
 
     let port = upstream.address().port();
-    let proxy = TestProxy::start(&ca, vec![rule("GET", "http://localhost/*")], port).await;
+    let proxy = TestProxy::builder(&ca, vec![rule("GET", "http://localhost/*")], port)
+        .start()
+        .await;
 
     // Send a raw HTTP request through the proxy *without* a Host header.
     // reqwest always adds Host, so we use a raw TCP stream.
@@ -249,7 +260,9 @@ async fn test_host_header_preserved_when_present() {
         .await;
 
     let port = upstream.address().port();
-    let proxy = TestProxy::start(&ca, vec![rule("GET", "http://localhost/*")], port).await;
+    let proxy = TestProxy::builder(&ca, vec![rule("GET", "http://localhost/*")], port)
+        .start()
+        .await;
 
     // Send a raw HTTP request with an explicit custom Host header
     let mut stream = tokio::net::TcpStream::connect(proxy.addr()).await.unwrap();

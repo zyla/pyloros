@@ -44,21 +44,22 @@ async fn test_git_fetch_rule_blocks_push() {
 
     let request_log: RequestLog = Arc::new(Mutex::new(Vec::new()));
 
-    let upstream = TestUpstream::start_reported(
-        &t,
+    let upstream = TestUpstream::builder(
         &ca,
         git_cgi_handler(backend_path, repos_dir, request_log.clone()),
-        "git http-backend CGI",
     )
+    .report(&t, "git http-backend CGI")
+    .start()
     .await;
 
     // Only allow fetch, not push
-    let proxy = TestProxy::start_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![git_rule("fetch", "https://localhost/*")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let proxy_url = format!("http://127.0.0.1:{}", proxy.addr().port());
@@ -119,21 +120,22 @@ async fn test_git_push_rule_blocks_fetch() {
 
     let request_log: RequestLog = Arc::new(Mutex::new(Vec::new()));
 
-    let upstream = TestUpstream::start_reported(
-        &t,
+    let upstream = TestUpstream::builder(
         &ca,
         git_cgi_handler(backend_path, repos_dir, request_log.clone()),
-        "git http-backend CGI",
     )
+    .report(&t, "git http-backend CGI")
+    .start()
     .await;
 
     // Only allow push, not fetch
-    let proxy = TestProxy::start_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![git_rule("push", "https://localhost/*")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let proxy_url = format!("http://127.0.0.1:{}", proxy.addr().port());
@@ -195,21 +197,22 @@ async fn test_git_rule_repo_filtering() {
 
     let request_log: RequestLog = Arc::new(Mutex::new(Vec::new()));
 
-    let upstream = TestUpstream::start_reported(
-        &t,
+    let upstream = TestUpstream::builder(
         &ca,
         git_cgi_handler(backend_path, repos_dir, request_log.clone()),
-        "git http-backend CGI",
     )
+    .report(&t, "git http-backend CGI")
+    .start()
     .await;
 
     // Only allow operations on allowed.git
-    let proxy = TestProxy::start_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![git_rule("*", "https://localhost/allowed.git")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let proxy_url = format!("http://127.0.0.1:{}", proxy.addr().port());
@@ -273,17 +276,16 @@ async fn test_git_push_branch_allowed() {
 
     let request_log: RequestLog = Arc::new(Mutex::new(Vec::new()));
 
-    let upstream = TestUpstream::start_reported(
-        &t,
+    let upstream = TestUpstream::builder(
         &ca,
         git_cgi_handler(backend_path, repos_dir, request_log.clone()),
-        "git http-backend CGI",
     )
+    .report(&t, "git http-backend CGI")
+    .start()
     .await;
 
     // Allow all git ops, but push only to feature/* branches
-    let proxy = TestProxy::start_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![git_rule_with_branches(
             "*",
@@ -292,6 +294,8 @@ async fn test_git_push_branch_allowed() {
         )],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let proxy_url = format!("http://127.0.0.1:{}", proxy.addr().port());
@@ -365,17 +369,16 @@ async fn test_git_push_branch_blocked() {
 
     let request_log: RequestLog = Arc::new(Mutex::new(Vec::new()));
 
-    let upstream = TestUpstream::start_reported(
-        &t,
+    let upstream = TestUpstream::builder(
         &ca,
         git_cgi_handler(backend_path, repos_dir, request_log.clone()),
-        "git http-backend CGI",
     )
+    .report(&t, "git http-backend CGI")
+    .start()
     .await;
 
     // Allow all git ops, but push only to feature/* branches
-    let proxy = TestProxy::start_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![git_rule_with_branches(
             "*",
@@ -384,6 +387,8 @@ async fn test_git_push_branch_blocked() {
         )],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let proxy_url = format!("http://127.0.0.1:{}", proxy.addr().port());
@@ -449,17 +454,16 @@ async fn test_git_push_branch_blocked_shows_error_message() {
 
     let request_log: RequestLog = Arc::new(Mutex::new(Vec::new()));
 
-    let upstream = TestUpstream::start_reported(
-        &t,
+    let upstream = TestUpstream::builder(
         &ca,
         git_cgi_handler(backend_path, repos_dir, request_log.clone()),
-        "git http-backend CGI",
     )
+    .report(&t, "git http-backend CGI")
+    .start()
     .await;
 
     // Allow all git ops, but push only to feature/* branches
-    let proxy = TestProxy::start_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![git_rule_with_branches(
             "*",
@@ -468,6 +472,8 @@ async fn test_git_push_branch_blocked_shows_error_message() {
         )],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let proxy_url = format!("http://127.0.0.1:{}", proxy.addr().port());
@@ -536,8 +542,7 @@ async fn test_git_branch_restricted_rule_blocked_on_plain_http() {
     t.setup("Generated test CA");
 
     // Use a dummy upstream port — the request should be blocked before forwarding
-    let proxy = TestProxy::start_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![git_rule_with_branches(
             "push",
@@ -546,6 +551,8 @@ async fn test_git_branch_restricted_rule_blocked_on_plain_http() {
         )],
         1, // dummy port, not used for plain HTTP
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new_plain(&t, proxy.addr());
@@ -569,16 +576,19 @@ async fn test_fetch_only_rule_blocks_push_endpoints_directly() {
     let ca = TestCa::generate();
     t.setup("Generated test CA");
 
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, ok_handler("unreachable"), "dummy upstream").await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("unreachable"))
+        .report(&t, "dummy upstream")
+        .start()
+        .await;
 
     // Only allow fetch, not push
-    let proxy = TestProxy::start_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![git_rule("fetch", "https://localhost/*")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
@@ -613,16 +623,19 @@ async fn test_push_only_rule_blocks_fetch_endpoints_directly() {
     let ca = TestCa::generate();
     t.setup("Generated test CA");
 
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, ok_handler("unreachable"), "dummy upstream").await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("unreachable"))
+        .report(&t, "dummy upstream")
+        .start()
+        .await;
 
     // Only allow push, not fetch
-    let proxy = TestProxy::start_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![git_rule("push", "https://localhost/*")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);

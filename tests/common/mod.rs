@@ -269,57 +269,6 @@ pub struct TestUpstream {
 }
 
 impl TestUpstream {
-    /// Start a test upstream HTTPS server that responds with the given handler.
-    pub async fn start(ca: &TestCa, handler: UpstreamHandler) -> Self {
-        Self::start_for_host(ca, "localhost", handler).await
-    }
-
-    /// Start a test upstream with reporting.
-    pub async fn start_reported(
-        report: &TestReport,
-        ca: &TestCa,
-        handler: UpstreamHandler,
-        handler_desc: &str,
-    ) -> Self {
-        report.setup(format!("Upstream: {}", handler_desc));
-        Self::start(ca, handler).await
-    }
-
-    /// Start a test upstream HTTPS server with a cert for the given hostname (h2 + h1).
-    pub async fn start_for_host(ca: &TestCa, hostname: &str, handler: UpstreamHandler) -> Self {
-        let server_config = ca.server_tls_config(hostname);
-        Self::start_with_config(server_config, handler).await
-    }
-
-    /// Start a test upstream for a given hostname with reporting.
-    pub async fn start_for_host_reported(
-        report: &TestReport,
-        ca: &TestCa,
-        hostname: &str,
-        handler: UpstreamHandler,
-        handler_desc: &str,
-    ) -> Self {
-        report.setup(format!("Upstream ({}): {}", hostname, handler_desc));
-        Self::start_for_host(ca, hostname, handler).await
-    }
-
-    /// Start a test upstream HTTPS server that only speaks HTTP/1.1.
-    pub async fn start_h1_only(ca: &TestCa, handler: UpstreamHandler) -> Self {
-        let server_config = ca.server_tls_config_h1_only("localhost");
-        Self::start_with_config(server_config, handler).await
-    }
-
-    /// Start an H1-only test upstream with reporting.
-    pub async fn start_h1_only_reported(
-        report: &TestReport,
-        ca: &TestCa,
-        handler: UpstreamHandler,
-        handler_desc: &str,
-    ) -> Self {
-        report.setup(format!("Upstream (h1 only): {}", handler_desc));
-        Self::start_h1_only(ca, handler).await
-    }
-
     async fn start_with_config(server_config: Arc<ServerConfig>, handler: UpstreamHandler) -> Self {
         let h1_only = !server_config.alpn_protocols.iter().any(|p| p == b"h2");
         let acceptor = TlsAcceptor::from(server_config);
@@ -380,6 +329,61 @@ impl TestUpstream {
     pub fn shutdown(self) {
         let _ = self.shutdown_tx.send(());
     }
+
+    /// Create a builder for configuring a test upstream.
+    pub fn builder(ca: &TestCa, handler: UpstreamHandler) -> TestUpstreamBuilder<'_> {
+        TestUpstreamBuilder {
+            ca,
+            handler,
+            hostname: "localhost",
+            h1_only: false,
+            report: None,
+        }
+    }
+}
+
+pub struct TestUpstreamBuilder<'a> {
+    ca: &'a TestCa,
+    handler: UpstreamHandler,
+    hostname: &'a str,
+    h1_only: bool,
+    report: Option<(&'a TestReport, String)>,
+}
+
+impl<'a> TestUpstreamBuilder<'a> {
+    pub fn hostname(mut self, hostname: &'a str) -> Self {
+        self.hostname = hostname;
+        self
+    }
+
+    pub fn h1_only(mut self) -> Self {
+        self.h1_only = true;
+        self
+    }
+
+    pub fn report(mut self, report: &'a TestReport, desc: impl Into<String>) -> Self {
+        self.report = Some((report, desc.into()));
+        self
+    }
+
+    pub async fn start(self) -> TestUpstream {
+        if let Some((report, desc)) = &self.report {
+            if self.h1_only {
+                report.setup(format!("Upstream (h1 only): {}", desc));
+            } else if self.hostname != "localhost" {
+                report.setup(format!("Upstream ({}): {}", self.hostname, desc));
+            } else {
+                report.setup(format!("Upstream: {}", desc));
+            }
+        }
+
+        let server_config = if self.h1_only {
+            self.ca.server_tls_config_h1_only(self.hostname)
+        } else {
+            self.ca.server_tls_config(self.hostname)
+        };
+        TestUpstream::start_with_config(server_config, self.handler).await
+    }
 }
 
 /// A simple upstream handler that returns 200 with a text body.
@@ -435,126 +439,7 @@ pub struct TestProxy {
 }
 
 impl TestProxy {
-    /// Start a proxy configured with the given CA, rules, and upstream override.
-    pub async fn start(ca: &TestCa, rules: Vec<pyloros::config::Rule>, upstream_port: u16) -> Self {
-        Self::start_inner(ca, rules, Vec::new(), upstream_port).await
-    }
-
-    /// Start a proxy with authentication.
-    pub async fn start_with_auth(
-        ca: &TestCa,
-        rules: Vec<pyloros::config::Rule>,
-        auth: Option<(String, String)>,
-        upstream_port: u16,
-    ) -> Self {
-        Self::start_inner_with_host_and_auth(ca, rules, Vec::new(), upstream_port, None, auth).await
-    }
-
-    /// Start a proxy with credential injection.
-    pub async fn start_with_credentials(
-        ca: &TestCa,
-        rules: Vec<pyloros::config::Rule>,
-        credentials: Vec<pyloros::config::Credential>,
-        upstream_port: u16,
-    ) -> Self {
-        Self::start_inner(ca, rules, credentials, upstream_port).await
-    }
-
-    /// Start a proxy with reporting.
-    pub async fn start_reported(
-        report: &TestReport,
-        ca: &TestCa,
-        rules: Vec<pyloros::config::Rule>,
-        upstream_port: u16,
-    ) -> Self {
-        let desc = rules
-            .iter()
-            .map(|r| {
-                if let Some(ref git) = r.git {
-                    let branches_desc = r
-                        .branches
-                        .as_ref()
-                        .map(|b| format!(" branches={:?}", b))
-                        .unwrap_or_default();
-                    format!("`git={} {}`{}", git, r.url, branches_desc)
-                } else {
-                    format!(
-                        "`{} {}`{}",
-                        r.method.as_deref().unwrap_or("?"),
-                        r.url,
-                        if r.websocket { " [ws]" } else { "" }
-                    )
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        report.setup(format!("Proxy with rules: [{}]", desc));
-        Self::start_inner(ca, rules, Vec::new(), upstream_port).await
-    }
-
-    /// Start a proxy with reporting and upstream host override (for non-resolvable hostnames).
-    pub async fn start_with_host_override_reported(
-        report: &TestReport,
-        ca: &TestCa,
-        rules: Vec<pyloros::config::Rule>,
-        upstream_port: u16,
-        upstream_host: &str,
-    ) -> Self {
-        let desc = rules
-            .iter()
-            .map(|r| {
-                if let Some(ref git) = r.git {
-                    format!("`git={} {}`", git, r.url)
-                } else {
-                    format!("`{} {}`", r.method.as_deref().unwrap_or("?"), r.url)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        report.setup(format!(
-            "Proxy with rules: [{}] (host override: {})",
-            desc, upstream_host
-        ));
-        Self::start_inner_with_host_and_auth(
-            ca,
-            rules,
-            Vec::new(),
-            upstream_port,
-            Some(upstream_host.to_string()),
-            None,
-        )
-        .await
-    }
-
     async fn start_inner(
-        ca: &TestCa,
-        rules: Vec<pyloros::config::Rule>,
-        credentials: Vec<pyloros::config::Credential>,
-        upstream_port: u16,
-    ) -> Self {
-        Self::start_inner_with_host_and_auth(ca, rules, credentials, upstream_port, None, None)
-            .await
-    }
-
-    async fn start_inner_with_host(
-        ca: &TestCa,
-        rules: Vec<pyloros::config::Rule>,
-        credentials: Vec<pyloros::config::Credential>,
-        upstream_port: u16,
-        upstream_host: Option<String>,
-    ) -> Self {
-        Self::start_inner_with_host_and_auth(
-            ca,
-            rules,
-            credentials,
-            upstream_port,
-            upstream_host,
-            None,
-        )
-        .await
-    }
-
-    async fn start_inner_with_host_and_auth(
         ca: &TestCa,
         rules: Vec<pyloros::config::Rule>,
         credentials: Vec<pyloros::config::Credential>,
@@ -602,6 +487,100 @@ impl TestProxy {
 
     pub fn shutdown(self) {
         let _ = self.shutdown_tx.send(());
+    }
+
+    /// Create a builder for configuring a test proxy.
+    pub fn builder(
+        ca: &TestCa,
+        rules: Vec<pyloros::config::Rule>,
+        upstream_port: u16,
+    ) -> TestProxyBuilder<'_> {
+        TestProxyBuilder {
+            ca,
+            rules,
+            upstream_port,
+            credentials: Vec::new(),
+            upstream_host: None,
+            auth: None,
+            report: None,
+        }
+    }
+}
+
+pub struct TestProxyBuilder<'a> {
+    ca: &'a TestCa,
+    rules: Vec<pyloros::config::Rule>,
+    upstream_port: u16,
+    credentials: Vec<pyloros::config::Credential>,
+    upstream_host: Option<String>,
+    auth: Option<(String, String)>,
+    report: Option<&'a TestReport>,
+}
+
+impl<'a> TestProxyBuilder<'a> {
+    pub fn credentials(mut self, credentials: Vec<pyloros::config::Credential>) -> Self {
+        self.credentials = credentials;
+        self
+    }
+
+    pub fn upstream_host(mut self, host: &str) -> Self {
+        self.upstream_host = Some(host.to_string());
+        self
+    }
+
+    pub fn auth(mut self, username: &str, password: &str) -> Self {
+        self.auth = Some((username.to_string(), password.to_string()));
+        self
+    }
+
+    pub fn report(mut self, report: &'a TestReport) -> Self {
+        self.report = Some(report);
+        self
+    }
+
+    pub async fn start(self) -> TestProxy {
+        if let Some(report) = self.report {
+            let desc = self
+                .rules
+                .iter()
+                .map(|r| {
+                    if let Some(ref git) = r.git {
+                        let branches_desc = r
+                            .branches
+                            .as_ref()
+                            .map(|b| format!(" branches={:?}", b))
+                            .unwrap_or_default();
+                        format!("`git={} {}`{}", git, r.url, branches_desc)
+                    } else {
+                        format!(
+                            "`{} {}`{}",
+                            r.method.as_deref().unwrap_or("?"),
+                            r.url,
+                            if r.websocket { " [ws]" } else { "" }
+                        )
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            if let Some(ref host) = self.upstream_host {
+                report.setup(format!(
+                    "Proxy with rules: [{}] (host override: {})",
+                    desc, host
+                ));
+            } else {
+                report.setup(format!("Proxy with rules: [{}]", desc));
+            }
+        }
+
+        TestProxy::start_inner(
+            self.ca,
+            self.rules,
+            self.credentials,
+            self.upstream_port,
+            self.upstream_host,
+            self.auth,
+        )
+        .await
     }
 }
 

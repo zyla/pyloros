@@ -12,19 +12,17 @@ async fn test_allowed_get_returns_200() {
     let t = test_report!("Allowed GET reaches upstream");
 
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start_reported(
-        &t,
-        &ca,
-        ok_handler("hello from upstream"),
-        "returns 'hello from upstream'",
-    )
-    .await;
-    let proxy = TestProxy::start_reported(
-        &t,
+    let upstream = TestUpstream::builder(&ca, ok_handler("hello from upstream"))
+        .report(&t, "returns 'hello from upstream'")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(
         &ca,
         vec![rule("GET", "https://localhost/*")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
@@ -46,21 +44,19 @@ async fn test_blocked_request_returns_451() {
     let t = test_report!("Blocked request returns 451");
 
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start_reported(
-        &t,
-        &ca,
-        ok_handler("should not reach"),
-        "returns 'should not reach'",
-    )
-    .await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("should not reach"))
+        .report(&t, "returns 'should not reach'")
+        .start()
+        .await;
 
     // Rule only allows example.com, not localhost
-    let proxy = TestProxy::start_reported(
-        &t,
+    let proxy = TestProxy::builder(
         &ca,
         vec![rule("GET", "https://example.com/*")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
@@ -88,13 +84,17 @@ async fn test_method_filtering() {
     let t = test_report!("Method filtering: GET allowed, POST blocked");
 
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start_reported(&t, &ca, ok_handler("ok"), "returns 'ok'").await;
-    let proxy = TestProxy::start_reported(
-        &t,
+    let upstream = TestUpstream::builder(&ca, ok_handler("ok"))
+        .report(&t, "returns 'ok'")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(
         &ca,
         vec![rule("GET", "https://localhost/*")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
@@ -117,9 +117,14 @@ async fn test_empty_ruleset_blocks_all() {
     let t = test_report!("Empty ruleset blocks all requests");
 
     let ca = TestCa::generate();
-    let upstream =
-        TestUpstream::start_reported(&t, &ca, ok_handler("nope"), "returns 'nope'").await;
-    let proxy = TestProxy::start_reported(&t, &ca, vec![], upstream.port()).await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("nope"))
+        .report(&t, "returns 'nope'")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(&ca, vec![], upstream.port())
+        .report(&t)
+        .start()
+        .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
     let resp = client.get("https://localhost/anything").await;
@@ -140,14 +145,14 @@ async fn test_wildcard_method() {
     let t = test_report!("Wildcard method allows any HTTP method");
 
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start_reported(&t, &ca, ok_handler("ok"), "returns 'ok'").await;
-    let proxy = TestProxy::start_reported(
-        &t,
-        &ca,
-        vec![rule("*", "https://localhost/*")],
-        upstream.port(),
-    )
-    .await;
+    let upstream = TestUpstream::builder(&ca, ok_handler("ok"))
+        .report(&t, "returns 'ok'")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(&ca, vec![rule("*", "https://localhost/*")], upstream.port())
+        .report(&t)
+        .start()
+        .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
 
@@ -172,13 +177,17 @@ async fn test_wildcard_path() {
     let t = test_report!("Wildcard path matching");
 
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start_reported(&t, &ca, ok_handler("ok"), "returns 'ok'").await;
-    let proxy = TestProxy::start_reported(
-        &t,
+    let upstream = TestUpstream::builder(&ca, ok_handler("ok"))
+        .report(&t, "returns 'ok'")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(
         &ca,
         vec![rule("GET", "https://localhost/api/*")],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
@@ -205,9 +214,11 @@ async fn test_multiple_rules() {
     let t = test_report!("Multiple rules allow/block correctly");
 
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start_reported(&t, &ca, ok_handler("ok"), "returns 'ok'").await;
-    let proxy = TestProxy::start_reported(
-        &t,
+    let upstream = TestUpstream::builder(&ca, ok_handler("ok"))
+        .report(&t, "returns 'ok'")
+        .start()
+        .await;
+    let proxy = TestProxy::builder(
         &ca,
         vec![
             rule("GET", "https://localhost/api/*"),
@@ -215,6 +226,8 @@ async fn test_multiple_rules() {
         ],
         upstream.port(),
     )
+    .report(&t)
+    .start()
     .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
