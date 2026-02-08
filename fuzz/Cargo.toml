@@ -1,0 +1,42 @@
+[package]
+name = "redlimitador-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.redlimitador]
+path = ".."
+
+[[bin]]
+name = "fuzz_pktline"
+path = "fuzz_targets/fuzz_pktline.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_pattern_matcher"
+path = "fuzz_targets/fuzz_pattern_matcher.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_url_pattern"
+path = "fuzz_targets/fuzz_url_pattern.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_config"
+path = "fuzz_targets/fuzz_config.rs"
+test = false
+doc = false
+bench = false

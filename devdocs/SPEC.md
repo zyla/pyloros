@@ -244,6 +244,10 @@ Tests produce a human-readable report showing, for each test: what was done, wha
 
 Test actions (HTTP requests, CLI invocations, etc.) should be performed through wrapper functions that both execute the action and emit a matching report entry. Bare `t.action()` + manual code pairs are not acceptable — the action description and execution must be coupled in a single API call so they can't drift apart. Examples: `ReportingClient` for HTTP requests, `_reported()` variants of test helpers.
 
+### Fuzzing
+
+Fuzz testing with `cargo-fuzz` (libFuzzer) targets parser and matching code that handles untrusted input. Targets: pkt-line parsing, pattern matching, URL pattern parsing, config parsing. Run manually, not in CI. Seed corpora live in `fuzz/seeds/<target>/`.
+
 ## Distribution
 
 Statically-linked Linux x86_64 binaries (musl) are published as GitHub Release assets on version tags (`v*`). The release workflow builds the binary, runs tests against it, verifies static linking, and packages it as a tarball with SHA256 checksums.
