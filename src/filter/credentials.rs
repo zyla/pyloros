@@ -11,11 +11,13 @@ use crate::filter::RequestInfo;
 pub enum ResolvedCredential {
     Header {
         url_pattern: UrlPattern,
+        url_display: String,
         header: String,
         value: String,
     },
     AwsSigV4 {
         url_pattern: UrlPattern,
+        url_display: String,
         access_key_id: String,
         secret_access_key: String,
         session_token: Option<String>,
@@ -52,6 +54,7 @@ impl CredentialEngine {
                     let url_pattern = UrlPattern::new(url)?;
                     resolved.push(ResolvedCredential::Header {
                         url_pattern,
+                        url_display: url.clone(),
                         header: header.to_lowercase(),
                         value,
                     });
@@ -71,6 +74,7 @@ impl CredentialEngine {
                     let url_pattern = UrlPattern::new(url)?;
                     resolved.push(ResolvedCredential::AwsSigV4 {
                         url_pattern,
+                        url_display: url.clone(),
                         access_key_id,
                         secret_access_key,
                         session_token,
@@ -221,14 +225,14 @@ impl CredentialEngine {
             .iter()
             .map(|c| match c {
                 ResolvedCredential::Header {
-                    url_pattern,
+                    url_display,
                     header,
                     ..
                 } => {
-                    format!("header={} url={}", header, url_pattern.scheme.pattern())
+                    format!("header={} url={}", header, url_display)
                 }
-                ResolvedCredential::AwsSigV4 { url_pattern, .. } => {
-                    format!("aws-sigv4 url={}", url_pattern.scheme.pattern())
+                ResolvedCredential::AwsSigV4 { url_display, .. } => {
+                    format!("aws-sigv4 url={}", url_display)
                 }
             })
             .collect()
