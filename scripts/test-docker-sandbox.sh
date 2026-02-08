@@ -41,6 +41,7 @@ MAIN_WORKTREE="$(git -C "$PROJECT_DIR" worktree list --porcelain | head -1 | sed
 for search_dir in "$PROJECT_DIR" "$MAIN_WORKTREE"; do
     for candidate in \
         "$search_dir/target/x86_64-unknown-linux-musl/release/redlimitador" \
+        "$search_dir/target/x86_64-unknown-linux-musl/debug/redlimitador" \
         "$search_dir/target/release/redlimitador" \
         "$search_dir/target/debug/redlimitador"; do
         if [[ -x "$candidate" ]]; then
