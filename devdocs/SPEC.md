@@ -111,7 +111,7 @@ subcommands:
 - Separate control over logging of allowed and blocked requests (e.g., log only blocked to reduce noise, or only allowed for auditing)
 - Error messages for failed upstream requests must include the request method and URL for diagnostics
 
-### Proxy Authentication (planned)
+### Proxy Authentication
 
 The proxy can require clients to authenticate before processing any requests. This prevents unauthorized network entities from using the proxy's credential injection and URL allowlisting capabilities — critical when the proxy is reachable over a network (e.g. Docker internal networks where other containers could connect).
 
