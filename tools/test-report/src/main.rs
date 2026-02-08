@@ -378,7 +378,7 @@ fn render_output_step(md: &mut String, label: &str, raw_text: &str) {
     md.push_str(label);
     md.push_str("</summary>\n\n```\n");
     md.push_str(text.trim_end());
-    md.push_str("\n```\n\n</details>\n");
+    md.push_str("\n```\n\n</details>\n\n");
 }
 
 /// Render a step line, using a collapsible `<details>` block for long lines.
@@ -400,7 +400,7 @@ fn render_step(md: &mut String, prefix: &str, icon: &str, msg: &str) {
             format!("{} {}", icon, label)
         };
         md.push_str(&format!(
-            "<details>\n<summary>{}</summary>\n\n{}\n\n</details>\n",
+            "<details>\n<summary>{}</summary>\n\n{}\n\n</details>\n\n",
             summary_text, msg
         ));
     }
