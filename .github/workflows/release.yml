@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -74,6 +75,25 @@ jobs:
             ${{ env.ARCHIVE }}
             SHA256SUMS
 
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Copy binary to build context
+        run: cp target/${{ env.TARGET }}/release/redlimitador .
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/zyla/redlimitador:${{ github.ref_name }}
+            ghcr.io/zyla/redlimitador:latest
+
   latest:
     name: Latest Build
     if: github.ref == 'refs/heads/main'
@@ -140,3 +160,20 @@ jobs:
           files: |
             ${{ env.ARCHIVE }}
             SHA256SUMS
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Copy binary to build context
+        run: cp target/${{ env.TARGET }}/release/redlimitador .
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/zyla/redlimitador:edge

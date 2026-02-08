@@ -64,9 +64,16 @@ if [[ -z "$BINARY" ]]; then
     exit 1
 fi
 
+# Build local proxy Docker image from the binary using the project Dockerfile
+PROXY_IMAGE="rl-compose-test-proxy:$$"
+echo "Building local proxy image from $BINARY..."
+cp "$BINARY" "$PROJECT_DIR/redlimitador"
+docker build -t "$PROXY_IMAGE" -f "$PROJECT_DIR/Dockerfile" "$PROJECT_DIR"
+rm -f "$PROJECT_DIR/redlimitador"
+
 # Build test image with curl and git pre-installed
 SANDBOX_IMAGE="rl-compose-test:latest"
-echo "Building test image..."
+echo "Building test sandbox image..."
 docker build -t "$SANDBOX_IMAGE" -f - . <<'DOCKERFILE'
 FROM alpine:latest
 RUN apk add --no-cache curl git
@@ -80,7 +87,7 @@ echo "Generating CA certificate..."
 
 # Use a unique project name for isolation
 COMPOSE_PROJECT_NAME="rl-compose-test-$$"
-export COMPOSE_PROJECT_NAME BINARY CA_DIR SANDBOX_IMAGE
+export COMPOSE_PROJECT_NAME PROXY_IMAGE CA_DIR SANDBOX_IMAGE
 
 # Compose helper — runs compose with our file and project name
 dc() {
@@ -94,6 +101,7 @@ cleanup() {
     echo "Cleaning up..."
     dc down --volumes --remove-orphans >/dev/null 2>&1 || true
     rm -rf "$CA_DIR"
+    docker rmi "$PROXY_IMAGE" >/dev/null 2>&1 || true
     exit "$exit_code"
 }
 trap cleanup EXIT

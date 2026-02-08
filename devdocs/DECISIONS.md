@@ -136,3 +136,26 @@ acceptable just because git smart HTTP access is allowed.
 HTTPS body inspection. On plain HTTP, it is blocked with HTTP 451 (default-deny for
 unverifiable restrictions).
 
+## Docker Image
+
+### Alpine over scratch
+
+Alpine adds ~7MB over a `scratch` image but provides a shell (ash) for healthchecks
+and debugging. `wget --spider` is available out of the box for compose healthchecks,
+whereas `scratch` would require a custom healthcheck binary or none at all.
+
+### Single-stage Dockerfile
+
+The Dockerfile copies a pre-built binary rather than building inside Docker. The CI
+workflow already builds a statically-linked musl binary and verifies it — duplicating
+that build in a multi-stage Dockerfile would add complexity and build time for no
+benefit. The binary is copied to the build context root before `docker build`.
+
+### Healthcheck with nc
+
+Alpine doesn't include bash, so the previous `bash -c 'echo > /dev/tcp/...'` healthcheck
+doesn't work. Since the proxy returns HTTP 451 for unmatched requests (including
+healthcheck probes to `http://127.0.0.1:8080/`), HTTP-level checks like `wget --spider`
+fail. Instead, `nc -z 127.0.0.1 8080` performs a TCP port check — available via BusyBox
+in Alpine without extra packages.
+

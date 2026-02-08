@@ -254,6 +254,16 @@ Statically-linked Linux x86_64 binaries (musl) are published as GitHub Release a
 
 A rolling `latest` pre-release is built from `main` on every push. It uses a fixed `latest` git tag (force-moved to HEAD) and is marked as a prerelease with `make_latest: false` so it doesn't override the versioned "Latest release" in the GitHub UI.
 
+### Docker Image
+
+A Docker image is published to `ghcr.io/zyla/redlimitador` with the following tags:
+- `v1.2.3` + `latest` — on version tags
+- `edge` — on every push to `main`
+
+The image uses Alpine as the base (~7MB overhead), containing only the statically-linked binary. The same release workflow that publishes GitHub Release assets also builds and pushes the Docker image.
+
+The Docker Compose example and sandbox script default to the published image, so users can start immediately without building from source.
+
 ### Docker Sandbox
 
 A helper script (`scripts/docker-sandbox.sh`) runs a Docker container with all network access

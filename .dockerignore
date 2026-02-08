@@ -1,0 +1,13 @@
+target/
+.git/
+.github/
+devdocs/
+tests/
+tools/
+examples/
+scripts/
+coverage/
+*.md
+*.toml
+!Cargo.toml
+LICENSE
