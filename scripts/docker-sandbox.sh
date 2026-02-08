@@ -52,6 +52,8 @@ EOF
     exit 0
 }
 
+log() { echo "$*" >&2; }
+
 die() {
     echo "Error: $*" >&2
     exit 1
@@ -86,11 +88,12 @@ while [[ $# -gt 0 ]]; do
             break
             ;;
         -*)
-            die "Unknown option: $1"
+            die "Unknown option: $1 (use -- to separate script options from container command)"
             ;;
         *)
-            POSITIONAL+=("$1")
-            shift
+            # First positional is IMAGE; everything after is COMMAND
+            POSITIONAL+=("$@")
+            break
             ;;
     esac
 done
@@ -128,7 +131,7 @@ OWN_CA_DIR=false
 if [[ -z "$CA_DIR" ]]; then
     CA_DIR="$(mktemp -d)"
     OWN_CA_DIR=true
-    echo "Generating CA certificate..."
+    log "Generating CA certificate..."
     "$BINARY" generate-ca --out "$CA_DIR" >/dev/null
 fi
 [[ -f "$CA_DIR/ca.crt" ]] || die "CA certificate not found: $CA_DIR/ca.crt"
@@ -144,16 +147,16 @@ CTR_SANDBOX="${PREFIX}-sandbox"
 cleanup() {
     local exit_code=$?
     if [[ "$KEEP" == true ]]; then
-        echo "Keeping resources (--keep). Clean up manually:"
-        echo "  docker rm -f $CTR_SANDBOX $CTR_PROXY 2>/dev/null"
-        echo "  docker network rm $NET_INTERNAL $NET_EXTERNAL 2>/dev/null"
+        log "Keeping resources (--keep). Clean up manually:"
+        log "  docker rm -f $CTR_SANDBOX $CTR_PROXY 2>/dev/null"
+        log "  docker network rm $NET_INTERNAL $NET_EXTERNAL 2>/dev/null"
         return
     fi
-    echo "Cleaning up..."
-    docker rm -f "$CTR_SANDBOX" 2>/dev/null || true
-    docker rm -f "$CTR_PROXY" 2>/dev/null || true
-    docker network rm "$NET_INTERNAL" 2>/dev/null || true
-    docker network rm "$NET_EXTERNAL" 2>/dev/null || true
+    log "Cleaning up..."
+    docker rm -f "$CTR_SANDBOX" >/dev/null 2>&1 || true
+    docker rm -f "$CTR_PROXY" >/dev/null 2>&1 || true
+    docker network rm "$NET_INTERNAL" >/dev/null 2>&1 || true
+    docker network rm "$NET_EXTERNAL" >/dev/null 2>&1 || true
     if [[ "$OWN_CA_DIR" == true ]]; then
         rm -rf "$CA_DIR"
     fi
@@ -162,12 +165,12 @@ cleanup() {
 trap cleanup EXIT
 
 # Create networks
-echo "Creating Docker networks..."
+log "Creating Docker networks..."
 docker network create "$NET_EXTERNAL" >/dev/null
 docker network create --internal "$NET_INTERNAL" >/dev/null
 
 # Start proxy container
-echo "Starting proxy container..."
+log "Starting proxy container..."
 docker run -d \
     --name "$CTR_PROXY" \
     --network "$NET_EXTERNAL" \
@@ -175,7 +178,7 @@ docker run -d \
     -v "$CONFIG:/etc/redlimitador/config.toml:ro" \
     -v "$CA_DIR/ca.crt:/etc/redlimitador/ca.crt:ro" \
     -v "$CA_DIR/ca.key:/etc/redlimitador/ca.key:ro" \
-    debian:bookworm-slim \
+    ubuntu:24.04 \
     /usr/local/bin/redlimitador run \
         --config /etc/redlimitador/config.toml \
         --ca-cert /etc/redlimitador/ca.crt \
@@ -187,7 +190,7 @@ docker run -d \
 docker network connect "$NET_INTERNAL" "$CTR_PROXY"
 
 # Wait for proxy readiness
-echo "Waiting for proxy to be ready..."
+log "Waiting for proxy to be ready..."
 SECONDS_WAITED=0
 while [[ $SECONDS_WAITED -lt $READINESS_TIMEOUT ]]; do
     if docker logs "$CTR_PROXY" 2>&1 | grep -q "Proxy server listening"; then
@@ -208,10 +211,10 @@ if [[ $SECONDS_WAITED -ge $READINESS_TIMEOUT ]]; then
     docker logs "$CTR_PROXY" 2>&1 >&2
     exit 1
 fi
-echo "Proxy is ready."
+log "Proxy is ready."
 
 # Run sandbox container
-echo "Starting sandbox container..."
+log "Starting sandbox container..."
 SANDBOX_ARGS=(
     --name "$CTR_SANDBOX"
     --network "$NET_INTERNAL"

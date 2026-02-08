@@ -35,6 +35,22 @@ if ! docker info >/dev/null 2>&1; then
     exit 0
 fi
 
+# Find the redlimitador binary (handles worktree where target/ is in the main repo)
+BINARY=""
+for candidate in \
+    "$PROJECT_DIR/target/x86_64-unknown-linux-musl/release/redlimitador" \
+    "$PROJECT_DIR/target/release/redlimitador"; do
+    if [[ -x "$candidate" ]]; then
+        BINARY="$candidate"
+        break
+    fi
+done
+if [[ -z "$BINARY" ]]; then
+    echo "Cannot find redlimitador binary. Run 'cargo build --release' first."
+    exit 1
+fi
+BINARY_FLAG="--binary $BINARY"
+
 # Build test Docker image with curl pre-installed
 TEST_IMAGE="rl-sandbox-test:latest"
 echo "Building test image..."
@@ -64,52 +80,58 @@ echo ""
 echo "=== Docker Sandbox Integration Tests ==="
 echo ""
 
+# Helper to run sandbox and capture output + exit code (set -e safe)
+# Captures only stdout (container output); script status messages go to stderr.
+run_sandbox() {
+    local output_file="$1"
+    shift
+    set +e
+    "$SANDBOX" $BINARY_FLAG --config "$TEST_DIR/config.toml" "$TEST_IMAGE" "$@" >"$output_file"
+    local rc=$?
+    set -e
+    return $rc
+}
+
 # Test 1: Allowed HTTPS through proxy
 echo "Test 1: Allowed HTTPS request through proxy"
-OUTPUT=""
 EXIT_CODE=0
-OUTPUT=$("$SANDBOX" --config "$TEST_DIR/config.toml" "$TEST_IMAGE" \
-    curl -sf https://example.com/ 2>&1) || EXIT_CODE=$?
+run_sandbox "$TEST_DIR/output1" curl -sf https://example.com/ || EXIT_CODE=$?
 
-if [[ $EXIT_CODE -eq 0 ]] && echo "$OUTPUT" | grep -q "Example Domain"; then
+if [[ $EXIT_CODE -eq 0 ]] && grep -q "Example Domain" "$TEST_DIR/output1"; then
     pass "Allowed HTTPS request succeeds and returns expected content"
 else
     fail "Allowed HTTPS request (exit=$EXIT_CODE)"
     echo "    Output (last 10 lines):"
-    echo "$OUTPUT" | tail -10 | sed 's/^/    /'
+    tail -10 "$TEST_DIR/output1" | sed 's/^/    /'
 fi
 
 # Test 2: Direct connection blocked (bypass proxy)
 echo "Test 2: Direct connection blocked (no proxy)"
-OUTPUT=""
 EXIT_CODE=0
-OUTPUT=$("$SANDBOX" --config "$TEST_DIR/config.toml" "$TEST_IMAGE" \
-    curl --noproxy '*' --connect-timeout 5 http://1.1.1.1/ 2>&1) || EXIT_CODE=$?
+run_sandbox "$TEST_DIR/output2" curl --noproxy '*' --connect-timeout 5 http://1.1.1.1/ || EXIT_CODE=$?
 
 if [[ $EXIT_CODE -ne 0 ]]; then
     pass "Direct connection is blocked (exit=$EXIT_CODE)"
 else
     fail "Direct connection should have been blocked but succeeded"
     echo "    Output (last 5 lines):"
-    echo "$OUTPUT" | tail -5 | sed 's/^/    /'
+    tail -5 "$TEST_DIR/output2" | sed 's/^/    /'
 fi
 
 # Test 3: Blocked URL returns 451
 echo "Test 3: Blocked URL returns HTTP 451"
-OUTPUT=""
 EXIT_CODE=0
-OUTPUT=$("$SANDBOX" --config "$TEST_DIR/config.toml" "$TEST_IMAGE" \
-    curl -so /dev/null -w '%{http_code}' https://httpbin.org/get 2>&1) || EXIT_CODE=$?
+run_sandbox "$TEST_DIR/output3" curl -so /dev/null -w '%{http_code}' https://httpbin.org/get || EXIT_CODE=$?
 
 # The HTTP status code is the last line of output (from -w '%{http_code}')
-HTTP_CODE=$(echo "$OUTPUT" | grep -oE '[0-9]{3}$' | tail -1)
+HTTP_CODE=$(grep -oE '[0-9]{3}$' "$TEST_DIR/output3" | tail -1 || true)
 
 if [[ "$HTTP_CODE" == "451" ]]; then
     pass "Blocked URL returns HTTP 451"
 else
     fail "Expected HTTP 451, got '$HTTP_CODE' (exit=$EXIT_CODE)"
     echo "    Output (last 10 lines):"
-    echo "$OUTPUT" | tail -10 | sed 's/^/    /'
+    tail -10 "$TEST_DIR/output3" | sed 's/^/    /'
 fi
 
 # Summary
