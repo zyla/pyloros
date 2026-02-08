@@ -4,11 +4,18 @@ mod common;
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
+use common::TestReport;
 use std::fs;
 use tempfile::TempDir;
 
 fn cmd() -> Command {
     cargo_bin_cmd!()
+}
+
+/// Run a CLI command and report it.
+fn run_cli_reported(t: &TestReport, args: &[&str]) -> std::process::Output {
+    t.action(format!("Run `redlimitador {}`", args.join(" ")));
+    cmd().args(args).output().unwrap()
 }
 
 // ---------- validate-config ----------
@@ -28,14 +35,10 @@ bind_address = "127.0.0.1:9090"
     )
     .unwrap();
 
-    t.action(format!(
-        "Run `redlimitador validate-config --config {}`",
-        config_path.display()
-    ));
-    let output = cmd()
-        .args(["validate-config", "--config", config_path.to_str().unwrap()])
-        .output()
-        .unwrap();
+    let output = run_cli_reported(
+        &t,
+        &["validate-config", "--config", config_path.to_str().unwrap()],
+    );
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
 
     t.assert_true("Exit success", output.status.success());
@@ -76,14 +79,10 @@ websocket = true
     )
     .unwrap();
 
-    t.action(format!(
-        "Run `redlimitador validate-config --config {}`",
-        config_path.display()
-    ));
-    let output = cmd()
-        .args(["validate-config", "--config", config_path.to_str().unwrap()])
-        .output()
-        .unwrap();
+    let output = run_cli_reported(
+        &t,
+        &["validate-config", "--config", config_path.to_str().unwrap()],
+    );
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
 
     t.assert_true("Exit success", output.status.success());
@@ -111,14 +110,10 @@ fn validate_config_invalid_toml() {
     let config_path = dir.path().join("bad.toml");
     fs::write(&config_path, "this is not valid toml [[[").unwrap();
 
-    t.action(format!(
-        "Run `redlimitador validate-config --config {}`",
-        config_path.display()
-    ));
-    let output = cmd()
-        .args(["validate-config", "--config", config_path.to_str().unwrap()])
-        .output()
-        .unwrap();
+    let output = run_cli_reported(
+        &t,
+        &["validate-config", "--config", config_path.to_str().unwrap()],
+    );
 
     t.assert_true("Exit failure", !output.status.success());
 }
@@ -127,15 +122,14 @@ fn validate_config_invalid_toml() {
 fn validate_config_nonexistent_file() {
     let t = test_report!("validate-config rejects nonexistent file");
 
-    t.action("Run `redlimitador validate-config --config /tmp/nonexistent_redlim.toml`");
-    let output = cmd()
-        .args([
+    let output = run_cli_reported(
+        &t,
+        &[
             "validate-config",
             "--config",
             "/tmp/nonexistent_redlim.toml",
-        ])
-        .output()
-        .unwrap();
+        ],
+    );
 
     t.assert_true("Exit failure", !output.status.success());
 }
@@ -156,14 +150,10 @@ url = "not-a-url"
     )
     .unwrap();
 
-    t.action(format!(
-        "Run `redlimitador validate-config --config {}`",
-        config_path.display()
-    ));
-    let output = cmd()
-        .args(["validate-config", "--config", config_path.to_str().unwrap()])
-        .output()
-        .unwrap();
+    let output = run_cli_reported(
+        &t,
+        &["validate-config", "--config", config_path.to_str().unwrap()],
+    );
 
     t.assert_true("Exit failure", !output.status.success());
 }
@@ -176,14 +166,7 @@ fn generate_ca_default() {
 
     let dir = TempDir::new().unwrap();
 
-    t.action(format!(
-        "Run `redlimitador generate-ca --out {}`",
-        dir.path().display()
-    ));
-    let output = cmd()
-        .args(["generate-ca", "--out", dir.path().to_str().unwrap()])
-        .output()
-        .unwrap();
+    let output = run_cli_reported(&t, &["generate-ca", "--out", dir.path().to_str().unwrap()]);
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
 
     t.assert_true("Exit success", output.status.success());
@@ -206,12 +189,9 @@ fn generate_ca_custom_names() {
 
     let dir = TempDir::new().unwrap();
 
-    t.action(format!(
-        "Run `redlimitador generate-ca --out {} --cert-name my.crt --key-name my.key`",
-        dir.path().display()
-    ));
-    let output = cmd()
-        .args([
+    let output = run_cli_reported(
+        &t,
+        &[
             "generate-ca",
             "--out",
             dir.path().to_str().unwrap(),
@@ -219,9 +199,8 @@ fn generate_ca_custom_names() {
             "my.crt",
             "--key-name",
             "my.key",
-        ])
-        .output()
-        .unwrap();
+        ],
+    );
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
 
     t.assert_true("Exit success", output.status.success());
@@ -246,14 +225,7 @@ fn generate_ca_creates_output_dir() {
     let dir = TempDir::new().unwrap();
     let nested = dir.path().join("sub").join("dir");
 
-    t.action(format!(
-        "Run `redlimitador generate-ca --out {}`",
-        nested.display()
-    ));
-    let output = cmd()
-        .args(["generate-ca", "--out", nested.to_str().unwrap()])
-        .output()
-        .unwrap();
+    let output = run_cli_reported(&t, &["generate-ca", "--out", nested.to_str().unwrap()]);
 
     t.assert_true("Exit success", output.status.success());
     t.assert_true("ca.crt exists", nested.join("ca.crt").exists());
