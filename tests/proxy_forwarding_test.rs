@@ -168,8 +168,8 @@ async fn test_connect_non_443_port_blocked() {
         response
     );
     assert!(
-        response.contains("Only HTTPS connections are allowed"),
-        "Expected blocking reason in body, got: {}",
+        response.contains("Request blocked by proxy policy"),
+        "Expected blocked-by-policy message in body, got: {}",
         response
     );
 

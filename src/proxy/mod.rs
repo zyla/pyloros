@@ -1,6 +1,7 @@
 //! HTTP proxy server implementation
 
 mod handler;
+mod response;
 mod server;
 mod tunnel;
 
