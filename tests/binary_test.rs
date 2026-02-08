@@ -195,11 +195,13 @@ fn build_curl_command(proxy_port: u16, url: &str, ca_cert_path: &str) -> Command
 }
 
 /// Build a curl command for plain HTTP proxy usage.
-/// Uses `HTTP_PROXY` env var (no TLS flags needed).
+/// Uses `http_proxy` env var (lowercase — curl ignores uppercase `HTTP_PROXY`
+/// for http:// URLs as a CGI security measure). Sets `no_proxy=""` because curl
+/// skips the proxy for localhost by default.
 fn build_curl_plain_http_command(proxy_port: u16, url: &str) -> Command {
     let proxy_url = format!("http://127.0.0.1:{}", proxy_port);
     let mut cmd = Command::new("curl");
-    cmd.env("HTTP_PROXY", &proxy_url).args([
+    cmd.env("http_proxy", &proxy_url).env("no_proxy", "").args([
         "-s",
         "-S",
         "-w",
@@ -344,7 +346,7 @@ async fn test_binary_plain_http_allowed_get_returns_200() {
     );
     std::fs::write(&config_path, &config_toml).unwrap();
 
-    let (mut child, proxy_port) = spawn_proxy_reported(&t, &config_path);
+    let (mut child, proxy_port, proxy_logs) = spawn_proxy_with_logs_reported(&t, &config_path);
 
     let url = format!("http://localhost:{}/test", upstream_port);
     let output =
@@ -353,6 +355,21 @@ async fn test_binary_plain_http_allowed_get_returns_200() {
 
     t.assert_eq("Response status", &status, &200u16);
     t.assert_eq("Response body", &body.as_str(), &"hello plain binary");
+
+    // Give the proxy a moment to flush logs, then verify traffic went through it.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let logs = proxy_logs.lock().unwrap();
+    let saw_allowed = logs.iter().any(|line| {
+        let clean = strip_ansi(line);
+        clean.contains("ALLOWED") && clean.contains("localhost")
+    });
+    t.assert_true("Proxy logged ALLOWED request to localhost", saw_allowed);
+    if !saw_allowed {
+        panic!(
+            "proxy did not log an ALLOWED request to localhost\nproxy logs:\n{}",
+            logs.join("\n")
+        );
+    }
 
     child.kill().ok();
     child.wait().ok();
