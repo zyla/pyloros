@@ -104,6 +104,7 @@ websocket = true
 - End-to-end integration tests covering all features: filtering rules, plain HTTP forwarding, HTTPS (MITM), HTTP/2, WebSocket
 - CLI integration tests for all subcommands (`run`, `generate-ca`, `validate-config`)
 - Tests run in GitHub Actions; coverage is reported
+- When testing integration with external tools (git, curl, claude CLI, etc.), always verify that traffic actually went through the proxy — don't just check that the tool succeeded. Record requests at the upstream handler or check proxy logs for expected entries.
 
 See `DECISIONS.md` for implementation details (E2E test architecture, port override mechanism).
 
@@ -120,6 +121,10 @@ Binary-level tests that send real requests to external APIs (e.g. `api.anthropic
 Mutation testing with `cargo-mutants` validates test suite quality. It is run manually (not in CI) and does not need automation. The goal is to kill all viable mutants for core logic (filtering, header manipulation, protocol handling). Surviving mutants in logging/debug/cosmetic code are acceptable.
 
 When adding new code paths with conditional logic (especially `if`, `match`, `==`/`!=`), ensure tests exercise both branches. Default-port matching, header presence checks, and error classification are common sources of surviving mutants.
+
+### Git Smart HTTP Tests
+
+Integration tests verify that git smart HTTP operations (clone, push) work correctly through the proxy's HTTPS MITM pipeline. Tests run a local git smart HTTP server (via `git http-backend` CGI), route `git clone`/`git push` commands through the proxy, and verify end-to-end correctness.
 
 ### Test Report Generation
 
