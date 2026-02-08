@@ -73,6 +73,14 @@ jobs:
           path: |
             test-report.md
             test-report.html
+      - name: Install musl tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Add musl target
+        run: rustup target add x86_64-unknown-linux-musl
+      - name: Build musl binary for Docker tests
+        run: cargo build --target x86_64-unknown-linux-musl
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
       - name: Run Docker sandbox tests
         run: scripts/test-docker-sandbox.sh
       - name: Run Docker Compose tests
