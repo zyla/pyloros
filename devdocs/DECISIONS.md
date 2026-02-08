@@ -93,7 +93,7 @@ containing:
 
 This matches how server-side `pre-receive` hooks report errors, so git clients display:
 ```
-remote: redlimitador: push to branch 'main' blocked by proxy policy
+remote: pyloros: push to branch 'main' blocked by proxy policy
  ! [remote rejected] main -> main (blocked by proxy policy)
 ```
 

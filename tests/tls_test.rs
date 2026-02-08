@@ -4,7 +4,7 @@
 mod common;
 
 use common::TestReport;
-use redlimitador::tls::{CertificateAuthority, GeneratedCa, MitmCertificateGenerator};
+use pyloros::tls::{CertificateAuthority, GeneratedCa, MitmCertificateGenerator};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::time::Duration;
 

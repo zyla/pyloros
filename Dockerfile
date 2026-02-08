@@ -1,5 +1,5 @@
 FROM alpine:3.21
-COPY redlimitador /usr/local/bin/redlimitador
+COPY pyloros /usr/local/bin/pyloros
 EXPOSE 8080
-ENTRYPOINT ["/usr/local/bin/redlimitador"]
+ENTRYPOINT ["/usr/local/bin/pyloros"]
 CMD ["run", "--bind", "0.0.0.0:8080"]

@@ -1,8 +1,8 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use redlimitador::filter::matcher::PatternMatcher;
-use redlimitador::filter::pktline;
+use pyloros::filter::matcher::PatternMatcher;
+use pyloros::filter::pktline;
 
 fuzz_target!(|data: &[u8]| {
     // Exercise capabilities extraction

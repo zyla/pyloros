@@ -14,7 +14,7 @@ pub fn blocked_response(method: &str, url: &str) -> Response<BoxBody<Bytes, hype
     Response::builder()
         .status(StatusCode::UNAVAILABLE_FOR_LEGAL_REASONS) // 451
         .header("Content-Type", "text/plain")
-        .header("X-Blocked-By", "redlimitador")
+        .header("X-Blocked-By", "pyloros")
         .body(Full::new(Bytes::from(body)).map_err(|e| match e {}).boxed())
         .unwrap()
 }
@@ -55,7 +55,7 @@ pub fn git_blocked_push_response(
     Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "application/x-git-receive-pack-result")
-        .header("X-Blocked-By", "redlimitador")
+        .header("X-Blocked-By", "pyloros")
         .body(
             Full::new(Bytes::from(response_body))
                 .map_err(|e| match e {})

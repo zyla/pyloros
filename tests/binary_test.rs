@@ -1,4 +1,4 @@
-//! Binary-level integration tests that spawn the real `redlimitador` binary
+//! Binary-level integration tests that spawn the real `pyloros` binary
 //! and drive it with `curl`.
 
 mod common;
@@ -55,14 +55,14 @@ url = "{url}"
 /// Parses stderr for the "Proxy server listening address=..." line to discover the port.
 /// Returns (Child, port). A background thread drains stderr to prevent pipe blocking.
 fn spawn_proxy(config_path: &Path) -> (Child, u16) {
-    let bin = assert_cmd::cargo::cargo_bin!("redlimitador");
+    let bin = assert_cmd::cargo::cargo_bin!("pyloros");
 
     let mut child = Command::new(bin)
         .args(["run", "--config", config_path.to_str().unwrap()])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("failed to spawn redlimitador binary");
+        .expect("failed to spawn pyloros binary");
 
     let stderr = child.stderr.take().expect("no stderr");
 
@@ -101,14 +101,14 @@ fn spawn_proxy_reported(t: &TestReport, config_path: &Path) -> (Child, u16) {
 
 /// Like `spawn_proxy`, but also collects all stderr lines into a shared buffer.
 fn spawn_proxy_with_logs(config_path: &Path) -> (Child, u16, Arc<Mutex<Vec<String>>>) {
-    let bin = assert_cmd::cargo::cargo_bin!("redlimitador");
+    let bin = assert_cmd::cargo::cargo_bin!("pyloros");
 
     let mut child = Command::new(bin)
         .args(["run", "--config", config_path.to_str().unwrap()])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("failed to spawn redlimitador binary");
+        .expect("failed to spawn pyloros binary");
 
     let stderr = child.stderr.take().expect("no stderr");
     let (tx, rx) = std::sync::mpsc::sync_channel::<u16>(1);
@@ -571,7 +571,7 @@ fn test_binary_generate_ca() {
 
     let tmp = TempDir::new().unwrap();
 
-    let bin = assert_cmd::cargo::cargo_bin!("redlimitador");
+    let bin = assert_cmd::cargo::cargo_bin!("pyloros");
     let mut cmd = Command::new(bin);
     cmd.args(["generate-ca", "--out", tmp.path().to_str().unwrap()]);
     let output = common::run_command_reported(&t, &mut cmd);

@@ -8,7 +8,7 @@ use tempfile::TempDir;
 
 /// Run a CLI command and report it.
 fn run_cli_reported(t: &TestReport, args: &[&str]) -> std::process::Output {
-    let bin = assert_cmd::cargo::cargo_bin!("redlimitador");
+    let bin = assert_cmd::cargo::cargo_bin!("pyloros");
     let mut cmd = std::process::Command::new(bin);
     cmd.args(args);
     common::run_command_reported(t, &mut cmd)

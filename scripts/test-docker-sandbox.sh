@@ -35,15 +35,15 @@ if ! docker info >/dev/null 2>&1; then
     exit 0
 fi
 
-# Find the redlimitador binary: check PROJECT_DIR first, then the main git worktree
+# Find the pyloros binary: check PROJECT_DIR first, then the main git worktree
 BINARY=""
 MAIN_WORKTREE="$(git -C "$PROJECT_DIR" worktree list --porcelain | head -1 | sed 's/^worktree //')"
 for search_dir in "$PROJECT_DIR" "$MAIN_WORKTREE"; do
     for candidate in \
-        "$search_dir/target/x86_64-unknown-linux-musl/release/redlimitador" \
-        "$search_dir/target/x86_64-unknown-linux-musl/debug/redlimitador" \
-        "$search_dir/target/release/redlimitador" \
-        "$search_dir/target/debug/redlimitador"; do
+        "$search_dir/target/x86_64-unknown-linux-musl/release/pyloros" \
+        "$search_dir/target/x86_64-unknown-linux-musl/debug/pyloros" \
+        "$search_dir/target/release/pyloros" \
+        "$search_dir/target/debug/pyloros"; do
         if [[ -x "$candidate" ]]; then
             BINARY="$candidate"
             break 2
@@ -51,7 +51,7 @@ for search_dir in "$PROJECT_DIR" "$MAIN_WORKTREE"; do
     done
 done
 if [[ -z "$BINARY" ]]; then
-    echo "Cannot find redlimitador binary. Run 'cargo build' first."
+    echo "Cannot find pyloros binary. Run 'cargo build' first."
     exit 1
 fi
 BINARY_FLAG="--binary $BINARY"

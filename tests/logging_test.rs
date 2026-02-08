@@ -1,7 +1,7 @@
 mod common;
 
 use common::{ok_handler, rule, LogCapture, ReportingClient, TestCa, TestUpstream};
-use redlimitador::{Config, ProxyServer};
+use pyloros::{Config, ProxyServer};
 
 // ---------------------------------------------------------------------------
 // Granular request logging config

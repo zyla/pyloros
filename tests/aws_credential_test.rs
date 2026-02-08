@@ -12,7 +12,7 @@ use common::{
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::{Request, Response, StatusCode};
-use redlimitador::config::Credential;
+use pyloros::config::Credential;
 use ring::digest;
 use std::sync::Arc;
 
@@ -485,7 +485,7 @@ async fn test_aws_sts_through_proxy() {
     let ca = TestCa::generate();
 
     // No upstream override — connect to real AWS
-    let mut config = redlimitador::Config::minimal(
+    let mut config = pyloros::Config::minimal(
         "127.0.0.1:0".to_string(),
         ca.cert_path.clone(),
         ca.key_path.clone(),
@@ -500,7 +500,7 @@ async fn test_aws_sts_through_proxy() {
     config.logging.log_allowed_requests = true;
     config.logging.log_blocked_requests = true;
 
-    let mut server = redlimitador::ProxyServer::new(config).unwrap();
+    let mut server = pyloros::ProxyServer::new(config).unwrap();
     let addr = server.bind().await.unwrap();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {

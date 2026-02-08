@@ -234,7 +234,7 @@ See `DECISIONS.md` for implementation details (E2E test architecture, port overr
 
 ### Binary-Level Tests
 
-Binary-level smoke tests spawn the actual `redlimitador` binary and drive it with
+Binary-level smoke tests spawn the actual `pyloros` binary and drive it with
 `curl`, configured via `http_proxy`/`HTTPS_PROXY` environment variables — the same
 mechanism real clients use. Tests prefer environment variables over curl CLI flags
 (e.g. `--proxy`, `--cacert`) where possible to mirror real-world usage. They verify
@@ -285,7 +285,7 @@ A rolling `latest` pre-release is built from `main` on every push. It uses a fix
 
 ### Docker Image
 
-A Docker image is published to `ghcr.io/zyla/redlimitador` with the following tags:
+A Docker image is published to `ghcr.io/zyla/pyloros` with the following tags:
 - `v1.2.3` + `latest` — on version tags
 - `edge` — on every push to `main`
 
@@ -296,7 +296,7 @@ The Docker Compose example and sandbox script default to the published image, so
 ### Docker Sandbox
 
 A helper script (`scripts/docker-sandbox.sh`) runs a Docker container with all network access
-routed exclusively through the redlimitador proxy using Docker internal networks. The sandbox
+routed exclusively through the pyloros proxy using Docker internal networks. The sandbox
 container is placed on an `--internal` Docker network with no direct internet access; the proxy
 container bridges the internal and external networks, forwarding only allowed requests.
 

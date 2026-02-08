@@ -128,7 +128,7 @@ pub fn build_receive_pack_error(
     } else if has_sideband {
         // Sideband-only fallback: send message on band 2 (stderr)
         let mut result = Vec::new();
-        let stderr_msg = format!("redlimitador: {}\n", message);
+        let stderr_msg = format!("pyloros: {}\n", message);
         result.extend(format_sideband_pktline(2, stderr_msg.as_bytes()));
         result.extend(b"0000");
         result
@@ -148,7 +148,7 @@ fn build_sideband_report_status(blocked: &[String], message: &str) -> Vec<u8> {
     let mut result = Vec::new();
 
     // Band 2: stderr message (displayed to user as "remote: ...")
-    let stderr_msg = format!("redlimitador: {}\n", message);
+    let stderr_msg = format!("pyloros: {}\n", message);
     result.extend(format_sideband_pktline(2, stderr_msg.as_bytes()));
 
     // Build the entire report-status buffer (inner pkt-lines + inner flush)
@@ -660,7 +660,7 @@ mod tests {
 
         let result_str = String::from_utf8_lossy(&result);
         // Should contain the stderr message on band 2
-        t.assert_true("contains message", result_str.contains("redlimitador:"));
+        t.assert_true("contains message", result_str.contains("pyloros:"));
         // Should contain unpack ok and ng in the band 1 data
         t.assert_true("contains unpack ok", result_str.contains("unpack ok"));
         t.assert_true(
@@ -689,10 +689,7 @@ mod tests {
         );
         t.assert_true("ends with flush", result_str.ends_with("0000"));
         // Should NOT contain band bytes or stderr message
-        t.assert_true(
-            "no redlimitador prefix",
-            !result_str.contains("redlimitador:"),
-        );
+        t.assert_true("no pyloros prefix", !result_str.contains("pyloros:"));
     }
 
     #[test]
@@ -744,7 +741,7 @@ mod tests {
 
         let result_str = String::from_utf8_lossy(&result);
         // Should produce sideband-wrapped report-status (same as v1)
-        t.assert_true("contains message", result_str.contains("redlimitador:"));
+        t.assert_true("contains message", result_str.contains("pyloros:"));
         t.assert_true("contains unpack ok", result_str.contains("unpack ok"));
         t.assert_true(
             "contains ng line",

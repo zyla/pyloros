@@ -61,7 +61,7 @@ When debugging, isolate first: write a minimal reproducing test before iterating
 
 ## Worktree Workflow
 
-IMPORTANT: NEVER make changes directly in the main working directory (`/home/zyla.linux/redlimitador`). ALL development work MUST happen in a worktree — this includes SPEC.md edits, doc changes, and early design iteration, not just code. When a new feature is proposed, create the worktree first, then write the spec update there. Do not edit files, run builds, or make commits in the main directory. If you catch yourself about to modify a file in the main directory, STOP and create a worktree first. This applies even for "small" or "trivial" changes. Multiple conversations may be running concurrently in separate worktrees, so uncommitted changes in the main directory risk being silently discarded during cleanup.
+IMPORTANT: NEVER make changes directly in the main working directory (`/home/zyla.linux/pyloros`). ALL development work MUST happen in a worktree — this includes SPEC.md edits, doc changes, and early design iteration, not just code. When a new feature is proposed, create the worktree first, then write the spec update there. Do not edit files, run builds, or make commits in the main directory. If you catch yourself about to modify a file in the main directory, STOP and create a worktree first. This applies even for "small" or "trivial" changes. Multiple conversations may be running concurrently in separate worktrees, so uncommitted changes in the main directory risk being silently discarded during cleanup.
 
 When making a plan, ALWAYS mention worktree setup in it, so that user can verify that you follow this.
 
@@ -69,13 +69,13 @@ When making a plan, ALWAYS mention worktree setup in it, so that user can verify
 
 ```bash
 git branch claude/<feature-slug> main
-mkdir -p ../redlimitador-worktrees
-git worktree add ../redlimitador-worktrees/<feature-slug> claude/<feature-slug>
+mkdir -p ../pyloros-worktrees
+git worktree add ../pyloros-worktrees/<feature-slug> claude/<feature-slug>
 ```
 
 **Branch naming**: `claude/<feature-slug>` (lowercase, hyphen-separated).
 
-**Location**: worktrees live in `../redlimitador-worktrees/<slug>/` (a sibling directory, not a subdirectory) so Grep/Glob don't find duplicate files.
+**Location**: worktrees live in `../pyloros-worktrees/<slug>/` (a sibling directory, not a subdirectory) so Grep/Glob don't find duplicate files.
 
 **During development**: use absolute paths for all commands since shell state resets between Bash calls. Follow the same dev process (tests, commits).
 
@@ -84,7 +84,7 @@ git worktree add ../redlimitador-worktrees/<feature-slug> claude/<feature-slug>
 **Cleanup** (after merge/PR):
 
 ```bash
-git worktree remove ../redlimitador-worktrees/<feature-slug>
+git worktree remove ../pyloros-worktrees/<feature-slug>
 git branch -d claude/<feature-slug>
 ```
 
