@@ -117,7 +117,7 @@ Binary-level tests that send real requests to external APIs (e.g. `api.anthropic
 
 ### Mutation Testing
 
-Periodic mutation testing with `cargo-mutants` validates test suite quality. The goal is to kill all viable mutants for core logic (filtering, header manipulation, protocol handling). Surviving mutants in logging/debug/cosmetic code are acceptable.
+Mutation testing with `cargo-mutants` validates test suite quality. It is run manually (not in CI) and does not need automation. The goal is to kill all viable mutants for core logic (filtering, header manipulation, protocol handling). Surviving mutants in logging/debug/cosmetic code are acceptable.
 
 When adding new code paths with conditional logic (especially `if`, `match`, `==`/`!=`), ensure tests exercise both branches. Default-port matching, header presence checks, and error classification are common sources of surviving mutants.
 
