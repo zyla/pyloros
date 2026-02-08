@@ -56,10 +56,7 @@ subcommands:
 - Explicit HTTP proxy (no iptables)
 - MITM with CA for HTTPS inspection
 - Tokio async runtime
-- rustls + rcgen for TLS (pure Rust, no OpenSSL). Evaluated shelling out to
-  `openssl` CLI for cert generation — it would only replace ~85 lines of rcgen
-  code while adding a runtime system dependency, fork+exec latency on the
-  per-host hot path, and temp file management. Not worth the tradeoff.
+- rustls + rcgen for TLS (pure Rust, no OpenSSL) — see `DECISIONS.md` for evaluation
 - TOML config
 - `*` wildcard = multi-segment match
 - HTTP 451 for blocked requests
@@ -103,40 +100,15 @@ websocket = true
 
 ## Testing
 
-- unit tests where it makes sense
-- end-to-end integration tests with wiremock
-  - covering all features, including:
-    - different filtering rules
-    - different protocols (http/1.1, http/2, websocket)
-- CLI integration tests for all user-facing subcommands (`run`, `generate-ca`, `validate-config`)
-- tests run in Github Actions
-- test coverage is reported
+- Unit tests where it makes sense
+- End-to-end integration tests covering all features: filtering rules, plain HTTP forwarding, HTTPS (MITM), HTTP/2, WebSocket
+- Binary-level smoke tests that spawn the real binary and drive it with `curl`
+- Live API tests against production servers (skipped when credentials unavailable)
+- CLI integration tests for all subcommands (`run`, `generate-ca`, `validate-config`)
+- Structured test report generation (Markdown + HTML)
+- Tests run in GitHub Actions; coverage is reported
 
-### E2E Test Architecture
-
-E2e tests exercise the full request flow: client → proxy (MITM) → upstream → response.
-
-The proxy binds to port 0 and exposes its actual address via `bind()` / `serve_until_shutdown()` split on `ProxyServer`.
-
-Since CONNECT is restricted to port 443 but test upstreams run on random ports, `TunnelHandler` supports an `upstream_port_override` that redirects forwarded connections to the test upstream's actual port. Similarly, `upstream_tls_config` allows injecting a `rustls::ClientConfig` that trusts the test CA (instead of webpki roots).
-
-These overrides are also exposed as optional config fields (`upstream_override_port`, `upstream_tls_ca`) so that binary-level tests can exercise the real CLI binary with `curl`.
-
-### Binary-Level Tests
-
-Binary-level smoke tests spawn the actual `redlimitador` binary and drive it with `curl`. They verify end-to-end behavior including config parsing, CLI argument handling, and process lifecycle. The proxy prints its actual listening address to stderr so tests can use `bind_address = "127.0.0.1:0"` and discover the port at runtime. `curl` is configured via the `HTTPS_PROXY` environment variable — the same mechanism real clients use — rather than `--proxy` flags.
-
-### Live API Tests
-
-Binary-level tests that send real requests to external APIs (e.g. `api.anthropic.com`) through the proxy, verifying the full MITM TLS pipeline against production servers. These tests require the `claude` CLI to be installed and authenticated (OAuth credentials at `~/.claude/.credentials.json`) and are skipped when either is unavailable (e.g. in CI).
-
-### Test Report Generation
-
-Tests produce a human-readable report showing, for each test: what was done, what the result was, and what assertions were checked. The report is tightly coupled to actual test execution — descriptions are derived from real parameters (URLs, rules, CLI args), making drift between tests and report impossible.
-
-- A standalone report generator tool (`tools/test-report/`) runs the test suite and produces Markdown + HTML output.
-- The Markdown report is published to the GitHub Actions job summary so it's visible directly in the run without downloading artifacts.
-- Reports are also uploaded as CI artifacts.
+See `DECISIONS.md` for implementation details (test architecture, port override mechanism, report design).
 
 ## Documentation
 
