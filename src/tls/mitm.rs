@@ -1,8 +1,6 @@
 //! MITM certificate generation with caching
 
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use rustls::server::ResolvesServerCert;
-use rustls::sign::CertifiedKey;
 use rustls::ServerConfig;
 use std::sync::Arc;
 use std::time::Duration;
@@ -96,38 +94,6 @@ impl MitmCertificateGenerator {
     /// Get cache statistics
     pub fn cache_size(&self) -> usize {
         self.cache.len()
-    }
-}
-
-/// A certificate resolver that generates MITM certificates on demand
-#[derive(Debug)]
-#[allow(dead_code)]
-pub struct MitmCertResolver {
-    generator: Arc<MitmCertificateGenerator>,
-    hostname: String,
-}
-
-impl MitmCertResolver {
-    #[allow(dead_code)]
-    pub fn new(generator: Arc<MitmCertificateGenerator>, hostname: String) -> Self {
-        Self {
-            generator,
-            hostname,
-        }
-    }
-}
-
-impl ResolvesServerCert for MitmCertResolver {
-    fn resolve(&self, _client_hello: rustls::server::ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
-        let (cert, key) = self.generator.get_cert_for_host(&self.hostname).ok()?;
-        let ca_cert = self.generator.ca_cert_der().clone();
-
-        let signing_key = rustls::crypto::aws_lc_rs::sign::any_supported_type(&key).ok()?;
-
-        Some(Arc::new(CertifiedKey::new(
-            vec![cert, ca_cert],
-            signing_key,
-        )))
     }
 }
 

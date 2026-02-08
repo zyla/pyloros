@@ -1,7 +1,7 @@
 //! CONNECT tunnel handling with TLS MITM
 
 use bytes::Bytes;
-use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
+use http_body_util::{combinators::BoxBody, BodyExt, Empty};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
@@ -12,6 +12,7 @@ use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
+use super::response::{blocked_response, error_response};
 use crate::error::{Error, Result};
 use crate::filter::{FilterEngine, RequestInfo};
 use crate::tls::MitmCertificateGenerator;
@@ -22,6 +23,8 @@ pub struct TunnelHandler {
     filter_engine: Arc<FilterEngine>,
     upstream_port_override: Option<u16>,
     upstream_tls_config: Option<Arc<ClientConfig>>,
+    log_allowed_requests: bool,
+    log_blocked_requests: bool,
 }
 
 impl TunnelHandler {
@@ -34,6 +37,8 @@ impl TunnelHandler {
             filter_engine,
             upstream_port_override: None,
             upstream_tls_config: None,
+            log_allowed_requests: true,
+            log_blocked_requests: true,
         }
     }
 
@@ -49,14 +54,19 @@ impl TunnelHandler {
         self
     }
 
+    /// Configure request logging.
+    pub fn with_request_logging(mut self, log_allowed: bool, log_blocked: bool) -> Self {
+        self.log_allowed_requests = log_allowed;
+        self.log_blocked_requests = log_blocked;
+        self
+    }
+
     /// Run a MITM tunnel on an upgraded connection
     pub async fn run_mitm_tunnel(
-        &self,
+        self: &Arc<Self>,
         upgraded: hyper::upgrade::Upgraded,
         host: &str,
         port: u16,
-        log_allowed_requests: bool,
-        log_blocked_requests: bool,
     ) -> Result<()> {
         let upgraded = TokioIo::new(upgraded);
 
@@ -74,27 +84,12 @@ impl TunnelHandler {
 
         // Create service to handle HTTP requests over TLS
         let host = host.to_string();
-        let filter_engine = self.filter_engine.clone();
-        let upstream_port_override = self.upstream_port_override;
-        let upstream_tls_config = self.upstream_tls_config.clone();
+        let handler = Arc::clone(self);
 
         let service = service_fn(move |req: Request<Incoming>| {
             let host = host.clone();
-            let filter_engine = filter_engine.clone();
-            let upstream_tls_config = upstream_tls_config.clone();
-            async move {
-                handle_tunneled_request(
-                    req,
-                    host,
-                    port,
-                    filter_engine,
-                    log_allowed_requests,
-                    log_blocked_requests,
-                    upstream_port_override,
-                    upstream_tls_config,
-                )
-                .await
-            }
+            let handler = Arc::clone(&handler);
+            async move { handler.handle_tunneled_request(req, &host, port).await }
         });
 
         // Serve HTTP/1.1 or HTTP/2 over the TLS connection (auto-detected via ALPN)
@@ -112,78 +107,85 @@ impl TunnelHandler {
 
         Ok(())
     }
-}
 
-/// Handle a request that came through the MITM tunnel
-#[allow(clippy::too_many_arguments)]
-async fn handle_tunneled_request(
-    req: Request<Incoming>,
-    host: String,
-    port: u16,
-    filter_engine: Arc<FilterEngine>,
-    log_allowed_requests: bool,
-    log_blocked_requests: bool,
-    upstream_port_override: Option<u16>,
-    upstream_tls_config: Option<Arc<ClientConfig>>,
-) -> std::result::Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
-    let method = req.method().to_string();
-    let path = req.uri().path().to_string();
-    let query = req.uri().query().map(|s| s.to_string());
+    /// Handle a request that came through the MITM tunnel
+    async fn handle_tunneled_request(
+        &self,
+        req: Request<Incoming>,
+        host: &str,
+        port: u16,
+    ) -> std::result::Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+        let method = req.method().to_string();
+        let path = req.uri().path().to_string();
+        let query = req.uri().query().map(|s| s.to_string());
 
-    // Check for WebSocket upgrade
-    let is_websocket = req
-        .headers()
-        .get(hyper::header::UPGRADE)
-        .map(|v| {
-            v.to_str()
-                .unwrap_or("")
-                .to_lowercase()
-                .contains("websocket")
-        })
-        .unwrap_or(false);
+        // Check for WebSocket upgrade
+        let is_websocket = req
+            .headers()
+            .get(hyper::header::UPGRADE)
+            .map(|v| {
+                v.to_str()
+                    .unwrap_or("")
+                    .to_lowercase()
+                    .contains("websocket")
+            })
+            .unwrap_or(false);
 
-    // Create request info for filtering
-    let request_info = if is_websocket {
-        RequestInfo::websocket("https", &host, Some(port), &path, query.as_deref())
-    } else {
-        RequestInfo::http(&method, "https", &host, Some(port), &path, query.as_deref())
-    };
+        // Create request info for filtering
+        let request_info = if is_websocket {
+            RequestInfo::websocket("https", host, Some(port), &path, query.as_deref())
+        } else {
+            RequestInfo::http(&method, "https", host, Some(port), &path, query.as_deref())
+        };
 
-    let full_url = request_info.full_url();
+        let full_url = request_info.full_url();
 
-    // Check filter
-    if !filter_engine.is_allowed(&request_info) {
-        if log_blocked_requests {
-            tracing::warn!(
+        // Check filter
+        if !self.filter_engine.is_allowed(&request_info) {
+            if self.log_blocked_requests {
+                tracing::warn!(
+                    method = %method,
+                    url = %full_url,
+                    "BLOCKED"
+                );
+            }
+            return Ok(blocked_response(&method, &full_url));
+        }
+
+        if self.log_allowed_requests {
+            tracing::info!(
                 method = %method,
                 url = %full_url,
-                "BLOCKED"
+                "ALLOWED"
             );
         }
-        return Ok(blocked_response(&method, &full_url));
-    }
 
-    if log_allowed_requests {
-        tracing::info!(
-            method = %method,
-            url = %full_url,
-            "ALLOWED"
-        );
-    }
+        // Forward the request to the actual server
+        let connect_port = self.upstream_port_override.unwrap_or(port);
+        let result = if is_websocket {
+            forward_websocket(
+                req,
+                host.to_string(),
+                connect_port,
+                self.upstream_tls_config.clone(),
+            )
+            .await
+        } else {
+            forward_request(
+                req,
+                host.to_string(),
+                connect_port,
+                self.upstream_tls_config.clone(),
+            )
+            .await
+        };
 
-    // Forward the request to the actual server
-    let connect_port = upstream_port_override.unwrap_or(port);
-    let result = if is_websocket {
-        forward_websocket(req, host, connect_port, upstream_tls_config).await
-    } else {
-        forward_request(req, host, connect_port, upstream_tls_config).await
-    };
-
-    match result {
-        Ok(resp) => Ok(resp),
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to forward request");
-            Ok(error_response(&e.to_string()))
+        match result {
+            Ok(resp) => Ok(resp),
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to forward request");
+                Ok(error_response(&e.to_string()))
+            }
         }
     }
 }
@@ -389,47 +391,4 @@ async fn forward_websocket(
     });
 
     Ok(client_response)
-}
-
-/// Create an HTTP 451 response for blocked requests
-fn blocked_response(method: &str, url: &str) -> Response<BoxBody<Bytes, hyper::Error>> {
-    let body = format!(
-        "Request blocked by proxy policy\n\nMethod: {}\nURL: {}\n",
-        method, url
-    );
-
-    Response::builder()
-        .status(StatusCode::UNAVAILABLE_FOR_LEGAL_REASONS) // 451
-        .header("Content-Type", "text/plain")
-        .header("X-Blocked-By", "redlimitador")
-        .body(Full::new(Bytes::from(body)).map_err(|e| match e {}).boxed())
-        .unwrap()
-}
-
-/// Create an error response
-fn error_response(message: &str) -> Response<BoxBody<Bytes, hyper::Error>> {
-    let body = format!("Proxy error: {}\n", message);
-
-    Response::builder()
-        .status(StatusCode::BAD_GATEWAY)
-        .header("Content-Type", "text/plain")
-        .body(Full::new(Bytes::from(body)).map_err(|e| match e {}).boxed())
-        .unwrap()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_blocked_response() {
-        let resp = blocked_response("GET", "https://example.com/blocked");
-        assert_eq!(resp.status(), StatusCode::UNAVAILABLE_FOR_LEGAL_REASONS);
-    }
-
-    #[test]
-    fn test_error_response() {
-        let resp = error_response("test error");
-        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
-    }
 }

@@ -1,13 +1,14 @@
 //! HTTP request handler for the proxy
 
 use bytes::Bytes;
-use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
+use http_body_util::{combinators::BoxBody, BodyExt, Empty};
 use hyper::body::Incoming;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 
+use super::response::{blocked_response, error_response};
 use super::tunnel::TunnelHandler;
 use crate::filter::{FilterEngine, RequestInfo};
 
@@ -61,11 +62,7 @@ impl ProxyHandler {
         // Only allow HTTPS (port 443 or explicit https)
         if port != 443 {
             tracing::warn!(host = %host, port = %port, "Blocking non-HTTPS CONNECT");
-            return Ok(blocked_response(
-                "CONNECT",
-                &format!("{}:{}", host, port),
-                "Only HTTPS connections are allowed",
-            ));
+            return Ok(blocked_response("CONNECT", &format!("{}:{}", host, port)));
         }
 
         // Get the upgrade future before we move the request
@@ -73,8 +70,6 @@ impl ProxyHandler {
 
         // Clone what we need for the spawned task
         let tunnel_handler = self.tunnel_handler.clone();
-        let log_allowed = self.log_allowed_requests;
-        let log_blocked = self.log_blocked_requests;
 
         // Spawn the tunnel handling
         tokio::spawn(async move {
@@ -86,10 +81,7 @@ impl ProxyHandler {
                 }
             };
 
-            if let Err(e) = tunnel_handler
-                .run_mitm_tunnel(upgraded, &host, port, log_allowed, log_blocked)
-                .await
-            {
+            if let Err(e) = tunnel_handler.run_mitm_tunnel(upgraded, &host, port).await {
                 // Don't log connection closed errors
                 let err_str = e.to_string();
                 if !err_str.contains("connection closed") && !err_str.contains("early eof") {
@@ -131,11 +123,7 @@ impl ProxyHandler {
                     "BLOCKED (HTTP)"
                 );
             }
-            return Ok(blocked_response(
-                &method,
-                &full_url,
-                "Request blocked by policy",
-            ));
+            return Ok(blocked_response(&method, &full_url));
         }
 
         if self.log_allowed_requests {
@@ -228,34 +216,4 @@ async fn forward_http_request(
 
     // Map the response body to BoxBody
     Ok(resp.map(|b| b.boxed()))
-}
-
-/// Create an HTTP 502 Bad Gateway error response.
-fn error_response(message: &str) -> Response<BoxBody<Bytes, hyper::Error>> {
-    let body = format!("Proxy error: {}\n", message);
-
-    Response::builder()
-        .status(StatusCode::BAD_GATEWAY)
-        .header("Content-Type", "text/plain")
-        .body(Full::new(Bytes::from(body)).map_err(|e| match e {}).boxed())
-        .unwrap()
-}
-
-/// Create an HTTP 451 response for blocked requests
-fn blocked_response(
-    method: &str,
-    url: &str,
-    reason: &str,
-) -> Response<BoxBody<Bytes, hyper::Error>> {
-    let body = format!(
-        "Request blocked by proxy policy\n\nMethod: {}\nURL: {}\nReason: {}\n",
-        method, url, reason
-    );
-
-    Response::builder()
-        .status(StatusCode::UNAVAILABLE_FOR_LEGAL_REASONS) // 451
-        .header("Content-Type", "text/plain")
-        .header("X-Blocked-By", "redlimitador")
-        .body(Full::new(Bytes::from(body)).map_err(|e| match e {}).boxed())
-        .unwrap()
 }
