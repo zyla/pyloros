@@ -110,7 +110,12 @@ See `DECISIONS.md` for implementation details (E2E test architecture, port overr
 
 ### Binary-Level Tests
 
-Binary-level smoke tests spawn the actual `redlimitador` binary and drive it with `curl`, configured via `HTTPS_PROXY` — the same mechanism real clients use. They verify end-to-end behavior including config parsing, CLI argument handling, and process lifecycle.
+Binary-level smoke tests spawn the actual `redlimitador` binary and drive it with
+`curl`, configured via `HTTP_PROXY`/`HTTPS_PROXY` environment variables — the same
+mechanism real clients use. Tests prefer environment variables over curl CLI flags
+(e.g. `--proxy`, `--cacert`) where possible to mirror real-world usage. They verify
+end-to-end behavior including config parsing, CLI argument handling, and process
+lifecycle.
 
 ### Live API Tests
 

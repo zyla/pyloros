@@ -9,6 +9,7 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
+use wiremock::{matchers::any, Mock, MockServer, ResponseTemplate};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -193,6 +194,23 @@ fn build_curl_command(proxy_port: u16, url: &str, ca_cert_path: &str) -> Command
     cmd
 }
 
+/// Build a curl command for plain HTTP proxy usage.
+/// Uses `HTTP_PROXY` env var (no TLS flags needed).
+fn build_curl_plain_http_command(proxy_port: u16, url: &str) -> Command {
+    let proxy_url = format!("http://127.0.0.1:{}", proxy_port);
+    let mut cmd = Command::new("curl");
+    cmd.env("HTTP_PROXY", &proxy_url).args([
+        "-s",
+        "-S",
+        "-w",
+        "\n%{http_code}",
+        "--max-time",
+        "10",
+        url,
+    ]);
+    cmd
+}
+
 /// Parse curl output (with `-w "\n%{http_code}"`) into (status_code, body, stderr).
 fn parse_curl_output(output: &std::process::Output) -> (u16, String, String) {
     let full_output = String::from_utf8_lossy(&output.stdout).to_string();
@@ -298,6 +316,46 @@ async fn test_binary_blocked_request_returns_451() {
     child.kill().ok();
     child.wait().ok();
     upstream.shutdown();
+}
+
+/// Spawn the binary, curl an allowed plain HTTP request, verify 200 + body.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_binary_plain_http_allowed_get_returns_200() {
+    let t = test_report!("Binary: allowed plain HTTP GET returns 200");
+
+    let upstream = MockServer::start().await;
+    t.setup("MockServer returning 200 'hello plain binary'");
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(200).set_body_string("hello plain binary"))
+        .mount(&upstream)
+        .await;
+
+    let upstream_port = upstream.address().port();
+
+    let ca = TestCa::generate();
+    let tmp = TempDir::new().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    let config_toml = build_config_toml(
+        &ca.cert_path,
+        &ca.key_path,
+        upstream_port,
+        &ca.cert_path,
+        &[("GET", "http://localhost/*")],
+    );
+    std::fs::write(&config_path, &config_toml).unwrap();
+
+    let (mut child, proxy_port) = spawn_proxy_reported(&t, &config_path);
+
+    let url = format!("http://localhost:{}/test", upstream_port);
+    let output =
+        common::run_command_reported(&t, &mut build_curl_plain_http_command(proxy_port, &url));
+    let (status, body, _stderr) = parse_curl_output(&output);
+
+    t.assert_eq("Response status", &status, &200u16);
+    t.assert_eq("Response body", &body.as_str(), &"hello plain binary");
+
+    child.kill().ok();
+    child.wait().ok();
 }
 
 /// Generate a TOML config for connecting to real upstream servers (no test overrides).
