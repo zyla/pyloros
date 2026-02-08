@@ -1,6 +1,6 @@
 mod common;
 
-use common::{ok_handler, ws_echo_handler, ws_rule, TestCa, TestProxy, TestReport, TestUpstream};
+use common::{ok_handler, ws_echo_handler, ws_rule, TestCa, TestProxy, TestUpstream};
 use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -19,7 +19,7 @@ async fn ws_connect_through_proxy(
     let mut tcp = TcpStream::connect(proxy_addr).await.unwrap();
 
     // Step 2: Send HTTP CONNECT request
-    let connect_req = format!("CONNECT localhost:443 HTTP/1.1\r\nHost: localhost:443\r\n\r\n");
+    let connect_req = "CONNECT localhost:443 HTTP/1.1\r\nHost: localhost:443\r\n\r\n";
     tcp.write_all(connect_req.as_bytes()).await.unwrap();
 
     // Step 3: Read the 200 OK response from the proxy

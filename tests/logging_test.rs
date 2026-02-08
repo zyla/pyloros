@@ -1,6 +1,6 @@
 mod common;
 
-use common::{ok_handler, rule, test_client, LogCapture, TestCa, TestReport, TestUpstream};
+use common::{ok_handler, rule, test_client, LogCapture, TestCa, TestUpstream};
 use redlimitador::{Config, ProxyServer};
 
 // ---------------------------------------------------------------------------

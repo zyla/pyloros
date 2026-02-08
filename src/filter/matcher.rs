@@ -231,7 +231,6 @@ impl UrlPattern {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_report;
 
     mod pattern_matcher {
         use super::*;
