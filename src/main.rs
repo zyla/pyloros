@@ -258,12 +258,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Validate and display credentials
             println!("  Credentials: {}", cfg.credentials.len());
             if !cfg.credentials.is_empty() {
+                let cred_engine = redlimitador::CredentialEngine::new(cfg.credentials)?;
                 println!();
                 println!("Credentials:");
-                for (i, cred) in cfg.credentials.iter().enumerate() {
-                    println!("  {}. header={} url={}", i + 1, cred.header, cred.url);
+                for (i, desc) in cred_engine.credential_descriptions().iter().enumerate() {
+                    println!("  {}. {}", i + 1, desc);
                 }
-                let cred_engine = redlimitador::CredentialEngine::new(cfg.credentials)?;
                 println!();
                 println!(
                     "All {} credentials compiled successfully.",

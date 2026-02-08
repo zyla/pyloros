@@ -8,10 +8,32 @@ use crate::error::Result;
 use crate::filter::RequestInfo;
 
 /// A resolved credential ready for matching and injection.
-pub struct ResolvedCredential {
-    url_pattern: UrlPattern,
-    header: String,
-    value: String,
+pub enum ResolvedCredential {
+    Header {
+        url_pattern: UrlPattern,
+        header: String,
+        value: String,
+    },
+    AwsSigV4 {
+        url_pattern: UrlPattern,
+        access_key_id: String,
+        secret_access_key: String,
+        session_token: Option<String>,
+    },
+}
+
+impl ResolvedCredential {
+    fn url_pattern(&self) -> &UrlPattern {
+        match self {
+            ResolvedCredential::Header { url_pattern, .. } => url_pattern,
+            ResolvedCredential::AwsSigV4 { url_pattern, .. } => url_pattern,
+        }
+    }
+
+    fn matches(&self, ri: &RequestInfo) -> bool {
+        self.url_pattern()
+            .matches(ri.scheme, ri.host, ri.port, ri.path, ri.query)
+    }
 }
 
 /// Engine that matches requests and injects credentials into headers.
@@ -24,37 +46,164 @@ impl CredentialEngine {
     pub fn new(credentials: Vec<Credential>) -> Result<Self> {
         let mut resolved = Vec::with_capacity(credentials.len());
         for cred in &credentials {
-            let value = resolve_credential_value(&cred.value)?;
-            let url_pattern = UrlPattern::new(&cred.url)?;
-            resolved.push(ResolvedCredential {
-                url_pattern,
-                header: cred.header.to_lowercase(),
-                value,
-            });
+            match cred {
+                Credential::Header { url, header, value } => {
+                    let value = resolve_credential_value(value)?;
+                    let url_pattern = UrlPattern::new(url)?;
+                    resolved.push(ResolvedCredential::Header {
+                        url_pattern,
+                        header: header.to_lowercase(),
+                        value,
+                    });
+                }
+                Credential::AwsSigV4 {
+                    url,
+                    access_key_id,
+                    secret_access_key,
+                    session_token,
+                } => {
+                    let access_key_id = resolve_credential_value(access_key_id)?;
+                    let secret_access_key = resolve_credential_value(secret_access_key)?;
+                    let session_token = session_token
+                        .as_deref()
+                        .map(resolve_credential_value)
+                        .transpose()?;
+                    let url_pattern = UrlPattern::new(url)?;
+                    resolved.push(ResolvedCredential::AwsSigV4 {
+                        url_pattern,
+                        access_key_id,
+                        secret_access_key,
+                        session_token,
+                    });
+                }
+            }
         }
         Ok(Self {
             credentials: resolved,
         })
     }
 
-    /// Inject matching credentials into the request headers.
+    /// Inject matching header credentials into the request headers.
     ///
-    /// For each credential whose URL pattern matches the request, the header
-    /// is inserted or overwritten. If multiple credentials set the same header,
-    /// the last match wins (config file order).
+    /// Only injects Header-type credentials. SigV4 credentials require body access
+    /// and must use `inject_with_body()` instead.
     pub fn inject(&self, request_info: &RequestInfo, headers: &mut HeaderMap) {
         for cred in &self.credentials {
-            if cred.url_pattern.matches(
-                request_info.scheme,
-                request_info.host,
-                request_info.port,
-                request_info.path,
-                request_info.query,
-            ) {
-                tracing::debug!(header = %cred.header, "Injecting credential");
-                if let Ok(name) = hyper::header::HeaderName::from_bytes(cred.header.as_bytes()) {
-                    if let Ok(val) = hyper::header::HeaderValue::from_str(&cred.value) {
-                        headers.insert(name, val);
+            if let ResolvedCredential::Header { header, value, .. } = cred {
+                if cred.matches(request_info) {
+                    tracing::debug!(header = %header, "Injecting credential");
+                    if let Ok(name) = hyper::header::HeaderName::from_bytes(header.as_bytes()) {
+                        if let Ok(val) = hyper::header::HeaderValue::from_str(value) {
+                            headers.insert(name, val);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Returns true if any matching credential needs body access (SigV4).
+    pub fn needs_body(&self, request_info: &RequestInfo) -> bool {
+        self.credentials.iter().any(|cred| {
+            matches!(cred, ResolvedCredential::AwsSigV4 { .. }) && cred.matches(request_info)
+        })
+    }
+
+    /// Inject all matching credentials including body-aware ones (SigV4).
+    ///
+    /// - For Header creds: sets/overwrites the header
+    /// - For AwsSigV4 creds: parses existing Authorization for region/service,
+    ///   strips old AWS headers, computes SigV4, sets new headers
+    pub fn inject_with_body(
+        &self,
+        request_info: &RequestInfo,
+        headers: &mut HeaderMap,
+        body: &[u8],
+    ) {
+        for cred in &self.credentials {
+            if !cred.matches(request_info) {
+                continue;
+            }
+            match cred {
+                ResolvedCredential::Header { header, value, .. } => {
+                    tracing::debug!(header = %header, "Injecting credential");
+                    if let Ok(name) = hyper::header::HeaderName::from_bytes(header.as_bytes()) {
+                        if let Ok(val) = hyper::header::HeaderValue::from_str(value) {
+                            headers.insert(name, val);
+                        }
+                    }
+                }
+                ResolvedCredential::AwsSigV4 {
+                    access_key_id,
+                    secret_access_key,
+                    session_token,
+                    ..
+                } => {
+                    // Parse existing Authorization header for region/service
+                    let auth_header = headers
+                        .get(hyper::header::AUTHORIZATION)
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("");
+
+                    let parsed = match super::sigv4::parse_authorization(auth_header) {
+                        Some(p) => p,
+                        None => {
+                            tracing::debug!(
+                                "No parseable AWS Authorization header, skipping SigV4"
+                            );
+                            continue;
+                        }
+                    };
+
+                    tracing::debug!(
+                        region = %parsed.region,
+                        service = %parsed.service,
+                        "Re-signing request with AWS SigV4"
+                    );
+
+                    // Strip old AWS headers
+                    headers.remove(hyper::header::AUTHORIZATION);
+                    headers.remove("x-amz-date");
+                    headers.remove("x-amz-content-sha256");
+                    headers.remove("x-amz-security-token");
+
+                    // Collect headers for signing (lowercase name, trimmed value)
+                    let mut sign_headers: Vec<(String, String)> = headers
+                        .iter()
+                        .map(|(name, value)| {
+                            (
+                                name.as_str().to_lowercase(),
+                                value.to_str().unwrap_or("").trim().to_string(),
+                            )
+                        })
+                        .collect();
+                    sign_headers.sort_by(|a, b| a.0.cmp(&b.0));
+
+                    // Build canonical URI and query
+                    let canonical_uri = request_info.path;
+                    let query = request_info.query.unwrap_or("");
+
+                    let new_headers = super::sigv4::sign_request(
+                        access_key_id,
+                        secret_access_key,
+                        session_token.as_deref(),
+                        request_info.method,
+                        canonical_uri,
+                        query,
+                        &sign_headers,
+                        body,
+                        &parsed.region,
+                        &parsed.service,
+                    );
+
+                    for (name, value) in new_headers {
+                        if let Ok(header_name) =
+                            hyper::header::HeaderName::from_bytes(name.as_bytes())
+                        {
+                            if let Ok(header_value) = hyper::header::HeaderValue::from_str(&value) {
+                                headers.insert(header_name, header_value);
+                            }
+                        }
                     }
                 }
             }
@@ -66,11 +215,22 @@ impl CredentialEngine {
         self.credentials.len()
     }
 
-    /// URL patterns for display (e.g. in validate-config output).
-    pub fn url_patterns(&self) -> Vec<&str> {
+    /// Credential descriptions for display (e.g. in validate-config output).
+    pub fn credential_descriptions(&self) -> Vec<String> {
         self.credentials
             .iter()
-            .map(|c| c.url_pattern.scheme.pattern())
+            .map(|c| match c {
+                ResolvedCredential::Header {
+                    url_pattern,
+                    header,
+                    ..
+                } => {
+                    format!("header={} url={}", header, url_pattern.scheme.pattern())
+                }
+                ResolvedCredential::AwsSigV4 { url_pattern, .. } => {
+                    format!("aws-sigv4 url={}", url_pattern.scheme.pattern())
+                }
+            })
             .collect()
     }
 }
@@ -81,7 +241,7 @@ mod tests {
     use crate::test_report;
 
     fn make_credential(url: &str, header: &str, value: &str) -> Credential {
-        Credential {
+        Credential::Header {
             url: url.to_string(),
             header: header.to_string(),
             value: value.to_string(),

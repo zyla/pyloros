@@ -6,7 +6,7 @@ use common::{echo_handler, rule, ReportingClient, TestCa, TestProxy, TestUpstrea
 use redlimitador::config::Credential;
 
 fn cred(url: &str, header: &str, value: &str) -> Credential {
-    Credential {
+    Credential::Header {
         url: url.to_string(),
         header: header.to_string(),
         value: value.to_string(),
