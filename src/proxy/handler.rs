@@ -10,7 +10,7 @@ use tokio::net::TcpStream;
 
 use super::response::{blocked_response, error_response};
 use super::tunnel::TunnelHandler;
-use crate::filter::{FilterEngine, RequestInfo};
+use crate::filter::{FilterEngine, FilterResult, RequestInfo};
 
 /// Main proxy request handler
 pub struct ProxyHandler {
@@ -114,24 +114,28 @@ impl ProxyHandler {
         let request_info = RequestInfo::http(&method, scheme, &host, port, path, query);
         let full_url = request_info.full_url();
 
-        // Check filter
-        if !self.filter_engine.is_allowed(&request_info) {
-            if self.log_blocked_requests {
-                tracing::warn!(
-                    method = %method,
-                    url = %full_url,
-                    "BLOCKED (HTTP)"
-                );
+        // Check filter (AllowedWithBranchCheck treated as Allowed for plain HTTP —
+        // branch inspection only applies to HTTPS CONNECT tunnels)
+        match self.filter_engine.check(&request_info) {
+            FilterResult::Blocked => {
+                if self.log_blocked_requests {
+                    tracing::warn!(
+                        method = %method,
+                        url = %full_url,
+                        "BLOCKED (HTTP)"
+                    );
+                }
+                return Ok(blocked_response(&method, &full_url));
             }
-            return Ok(blocked_response(&method, &full_url));
-        }
-
-        if self.log_allowed_requests {
-            tracing::info!(
-                method = %method,
-                url = %full_url,
-                "ALLOWED (HTTP)"
-            );
+            FilterResult::Allowed | FilterResult::AllowedWithBranchCheck(_) => {
+                if self.log_allowed_requests {
+                    tracing::info!(
+                        method = %method,
+                        url = %full_url,
+                        "ALLOWED (HTTP)"
+                    );
+                }
+            }
         }
 
         let upstream_port = port.unwrap_or(80);

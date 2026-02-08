@@ -1,7 +1,7 @@
 //! CONNECT tunnel handling with TLS MITM
 
 use bytes::Bytes;
-use http_body_util::{combinators::BoxBody, BodyExt, Empty};
+use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
@@ -14,7 +14,8 @@ use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 use super::response::{blocked_response, error_response};
 use crate::error::{Error, Result};
-use crate::filter::{FilterEngine, RequestInfo};
+use crate::filter::pktline::check_push_branches;
+use crate::filter::{FilterEngine, FilterResult, RequestInfo};
 use crate::tls::MitmCertificateGenerator;
 
 /// Handles CONNECT tunnels with TLS MITM
@@ -141,23 +142,87 @@ impl TunnelHandler {
         let full_url = request_info.full_url();
 
         // Check filter
-        if !self.filter_engine.is_allowed(&request_info) {
-            if self.log_blocked_requests {
-                tracing::warn!(
-                    method = %method,
-                    url = %full_url,
-                    "BLOCKED"
-                );
-            }
-            return Ok(blocked_response(&method, &full_url));
-        }
+        let filter_result = self.filter_engine.check(&request_info);
 
-        if self.log_allowed_requests {
-            tracing::info!(
-                method = %method,
-                url = %full_url,
-                "ALLOWED"
-            );
+        match filter_result {
+            FilterResult::Blocked => {
+                if self.log_blocked_requests {
+                    tracing::warn!(
+                        method = %method,
+                        url = %full_url,
+                        "BLOCKED"
+                    );
+                }
+                return Ok(blocked_response(&method, &full_url));
+            }
+            FilterResult::AllowedWithBranchCheck(ref patterns) => {
+                if self.log_allowed_requests {
+                    tracing::info!(
+                        method = %method,
+                        url = %full_url,
+                        "ALLOWED (branch check pending)"
+                    );
+                }
+
+                // Buffer the request body to inspect pkt-line refs
+                // TODO: optimize by reading only the pkt-line prefix, then chaining
+                // with the remaining stream for forwarding
+                let (parts, body) = req.into_parts();
+                let body_bytes = body
+                    .collect()
+                    .await
+                    .map_err(|e| {
+                        tracing::error!(error = %e, "Failed to buffer request body for branch check");
+                        e
+                    })?
+                    .to_bytes();
+
+                if !check_push_branches(&body_bytes, patterns) {
+                    if self.log_blocked_requests {
+                        tracing::warn!(
+                            method = %method,
+                            url = %full_url,
+                            "BLOCKED (branch restriction)"
+                        );
+                    }
+                    return Ok(blocked_response(&method, &full_url));
+                }
+
+                // Forward with the buffered body
+                let connect_port = self.upstream_port_override.unwrap_or(port);
+                let full_body = Full::new(body_bytes).map_err(|e| match e {}).boxed();
+                let req = match rebuild_request_for_upstream(parts, full_body, host, connect_port) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to rebuild request");
+                        return Ok(error_response(&e.to_string()));
+                    }
+                };
+                let result = forward_request_boxed(
+                    req,
+                    host.to_string(),
+                    connect_port,
+                    self.upstream_tls_config.clone(),
+                )
+                .await;
+
+                return match result {
+                    Ok(resp) => Ok(resp),
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to forward request");
+                        Ok(error_response(&e.to_string()))
+                    }
+                };
+            }
+            FilterResult::Allowed => {
+                if self.log_allowed_requests {
+                    tracing::info!(
+                        method = %method,
+                        url = %full_url,
+                        "ALLOWED"
+                    );
+                }
+            }
         }
 
         // Forward the request to the actual server
@@ -171,13 +236,20 @@ impl TunnelHandler {
             )
             .await
         } else {
-            forward_request(
-                req,
-                host.to_string(),
-                connect_port,
-                self.upstream_tls_config.clone(),
-            )
-            .await
+            let (parts, body) = req.into_parts();
+            let req = rebuild_request_for_upstream(parts, body.boxed(), host, connect_port);
+            match req {
+                Ok(req) => {
+                    forward_request_boxed(
+                        req,
+                        host.to_string(),
+                        connect_port,
+                        self.upstream_tls_config.clone(),
+                    )
+                    .await
+                }
+                Err(e) => Err(e),
+            }
         };
 
         match result {
@@ -231,12 +303,12 @@ async fn connect_upstream_tls(
 
 /// Rebuild an incoming request for forwarding to the upstream server,
 /// updating the Host header to match the target.
-fn rebuild_request_for_upstream(
+fn rebuild_request_for_upstream<B>(
     parts: hyper::http::request::Parts,
-    body: Incoming,
+    body: B,
     host: &str,
     port: u16,
-) -> Result<Request<Incoming>> {
+) -> Result<Request<B>> {
     let mut builder = Request::builder().method(parts.method).uri(parts.uri);
 
     for (name, value) in parts.headers.iter() {
@@ -252,9 +324,9 @@ fn rebuild_request_for_upstream(
         .map_err(|e| Error::proxy(format!("Failed to build request: {}", e)))
 }
 
-/// Forward a request to the upstream server (supports h1 and h2 via ALPN).
-async fn forward_request(
-    req: Request<Incoming>,
+/// Forward a request with a BoxBody to the upstream server (supports h1 and h2 via ALPN).
+async fn forward_request_boxed(
+    req: Request<BoxBody<Bytes, hyper::Error>>,
     host: String,
     port: u16,
     upstream_tls_config: Option<Arc<ClientConfig>>,
@@ -264,9 +336,6 @@ async fn forward_request(
     // Check negotiated ALPN protocol
     let negotiated_h2 = tls_stream.get_ref().1.alpn_protocol() == Some(b"h2".as_slice());
     tracing::debug!(host = %host, h2 = negotiated_h2, "Upstream TLS handshake complete");
-
-    let (parts, body) = req.into_parts();
-    let req = rebuild_request_for_upstream(parts, body, &host, port)?;
 
     let io = TokioIo::new(tls_stream);
 

@@ -3,8 +3,10 @@
 //! The git push protocol sends ref update commands in pkt-line format before
 //! the pack data. Each command line has the form:
 //!
-//!     <old-sha> <new-sha> <refname>\0<capabilities>\n   (first line)
-//!     <old-sha> <new-sha> <refname>\n                   (subsequent lines)
+//! ```text
+//! <old-sha> <new-sha> <refname>\0<capabilities>\n   (first line)
+//! <old-sha> <new-sha> <refname>\n                   (subsequent lines)
+//! ```
 //!
 //! Lines are prefixed with a 4-hex-digit length. The sequence ends with a
 //! flush packet (`0000`). We only need to read the pkt-line prefix to extract
