@@ -159,11 +159,6 @@ impl FilterEngine {
     pub fn rule_count(&self) -> usize {
         self.rules.len()
     }
-
-    /// Add a rule to the engine
-    pub fn add_rule(&mut self, rule: CompiledRule) {
-        self.rules.push(rule);
-    }
 }
 
 impl Default for FilterEngine {

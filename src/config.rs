@@ -178,24 +178,6 @@ impl Config {
             rules: Vec::new(),
         }
     }
-
-    /// Add a rule to the configuration
-    pub fn add_rule(&mut self, method: impl Into<String>, url: impl Into<String>) {
-        self.rules.push(Rule {
-            method: method.into(),
-            url: url.into(),
-            websocket: false,
-        });
-    }
-
-    /// Add a WebSocket rule to the configuration
-    pub fn add_websocket_rule(&mut self, url: impl Into<String>) {
-        self.rules.push(Rule {
-            method: "GET".to_string(),
-            url: url.into(),
-            websocket: true,
-        });
-    }
 }
 
 #[cfg(test)]
