@@ -664,7 +664,7 @@ impl TestProxy {
     /// Start a proxy with authentication.
     pub async fn start_with_auth(
         ca: &TestCa,
-        rules: Vec<redlimitador::config::Rule>,
+        rules: Vec<pyloros::config::Rule>,
         auth: Option<(String, String)>,
         upstream_port: u16,
     ) -> Self {
@@ -777,8 +777,8 @@ impl TestProxy {
 
     async fn start_inner_with_host_and_auth(
         ca: &TestCa,
-        rules: Vec<redlimitador::config::Rule>,
-        credentials: Vec<redlimitador::config::Credential>,
+        rules: Vec<pyloros::config::Rule>,
+        credentials: Vec<pyloros::config::Credential>,
         upstream_port: u16,
         upstream_host: Option<String>,
         auth: Option<(String, String)>,

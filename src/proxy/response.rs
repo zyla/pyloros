@@ -68,7 +68,7 @@ pub fn git_blocked_push_response(
 pub fn auth_required_response() -> Response<BoxBody<Bytes, hyper::Error>> {
     Response::builder()
         .status(StatusCode::PROXY_AUTHENTICATION_REQUIRED)
-        .header("Proxy-Authenticate", "Basic realm=\"redlimitador\"")
+        .header("Proxy-Authenticate", "Basic realm=\"pyloros\"")
         .header("Content-Type", "text/plain")
         .body(
             Full::new(Bytes::from("Proxy authentication required\n"))
@@ -122,7 +122,7 @@ mod tests {
                 .unwrap()
                 .to_str()
                 .unwrap(),
-            &"Basic realm=\"redlimitador\"",
+            &"Basic realm=\"pyloros\"",
         );
     }
 

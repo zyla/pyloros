@@ -229,7 +229,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 println!("  Authentication: enabled (username: {})", username);
                 // Try resolving password to catch env var issues early
-                redlimitador::config::resolve_credential_value(password)?;
+                pyloros::config::resolve_credential_value(password)?;
             } else {
                 println!("  Authentication: disabled");
             }
