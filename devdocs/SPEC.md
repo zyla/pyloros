@@ -220,6 +220,13 @@ routed exclusively through the redlimitador proxy using Docker internal networks
 container is placed on an `--internal` Docker network with no direct internet access; the proxy
 container bridges the internal and external networks, forwarding only allowed requests.
 
+### Docker Compose Example
+
+A Docker Compose example (`examples/docker-compose/`) provides a declarative alternative to the
+imperative sandbox script, with the same two-network architecture (external bridge + internal
+isolated). A test script (`scripts/test-docker-compose.sh`) verifies allowed/blocked behavior and
+network isolation.
+
 ## Documentation
 
 The project README (`README.md`) must contain:
