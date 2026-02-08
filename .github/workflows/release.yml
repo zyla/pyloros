@@ -54,7 +54,7 @@ jobs:
       - name: Verify static linking
         run: |
           file target/${{ env.TARGET }}/release/redlimitador
-          file target/${{ env.TARGET }}/release/redlimitador | grep -q "statically linked"
+          file target/${{ env.TARGET }}/release/redlimitador | grep -qE "static(ally|-pie) linked"
 
       - name: Package tarball
         run: |
@@ -105,7 +105,7 @@ jobs:
       - name: Verify static linking
         run: |
           file target/${{ env.TARGET }}/release/redlimitador
-          file target/${{ env.TARGET }}/release/redlimitador | grep -q "statically linked"
+          file target/${{ env.TARGET }}/release/redlimitador | grep -qE "static(ally|-pie) linked"
 
       - name: Package tarball
         run: |
