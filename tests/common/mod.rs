@@ -1,4 +1,5 @@
 //! Test infrastructure for e2e proxy tests.
+#![allow(dead_code)]
 
 use bytes::Bytes;
 use http_body_util::{combinators::BoxBody, BodyExt, Full};
@@ -767,10 +768,8 @@ pub fn ws_echo_handler() -> UpstreamHandler {
                         let _ = tx.close().await;
                         break;
                     }
-                    if msg.is_text() || msg.is_binary() {
-                        if tx.send(msg).await.is_err() {
-                            break;
-                        }
+                    if (msg.is_text() || msg.is_binary()) && tx.send(msg).await.is_err() {
+                        break;
                     }
                 }
             });

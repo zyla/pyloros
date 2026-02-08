@@ -4,4 +4,6 @@ pre-commit:
       run: cargo fmt --all
       stage_fixed: true
     - name: clippy
-      run: cargo clippy -- -D warnings
+      run: cargo clippy --all-targets -- -D warnings
+    - name: rustc-warnings
+      run: RUSTFLAGS="-D warnings" cargo check --all-targets

@@ -4,7 +4,6 @@ mod common;
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
-use common::TestReport;
 use std::fs;
 use tempfile::TempDir;
 
