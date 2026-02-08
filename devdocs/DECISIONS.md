@@ -105,3 +105,34 @@ blocking (`FilterResult::Blocked` for git-receive-pack URLs) and plain HTTP cont
 return HTTP 451, since the proxy doesn't have the request body available to extract
 capabilities.
 
+### Git-LFS batch endpoint support
+
+Git-LFS uses `POST {repo}/info/lfs/objects/batch` with a JSON body containing an
+`"operation"` field (`"download"` or `"upload"`). Each git rule now generates an
+additional compiled rule for this endpoint alongside the smart HTTP endpoint rules.
+
+**Operation mapping**: `git = "fetch"` → `"download"`, `git = "push"` → `"upload"`,
+`git = "*"` → both. This is a natural extension of how fetch/push map to smart HTTP
+endpoints.
+
+**Merged-scan for LFS rules**: Unlike branch checks (which short-circuit on first match),
+LFS batch endpoint rules accumulate allowed operations across all matching rules before
+checking the body. This prevents a common configuration pattern — separate `git = "fetch"`
+and `git = "push"` rules for the same repo — from blocking LFS: the fetch rule's
+`["download"]` and push rule's `["upload"]` merge to `["download", "upload"]`.
+
+**Branch restrictions don't apply to LFS**: LFS blobs are content-addressed by SHA-256.
+The blob itself carries no ref information — the actual ref update goes through
+`git-receive-pack` where branch restrictions are already enforced. Applying branch
+patterns to LFS would be meaningless and would break uploads.
+
+**Transfer URLs are out of scope**: LFS batch responses contain transfer URLs (often on
+external hosts like S3/Azure Blob) for actual object upload/download. These are opaque
+to the proxy and not automatically allowed — users must add separate HTTP rules for the
+transfer hosts. This is intentional: the proxy shouldn't assume which external hosts are
+acceptable just because git smart HTTP access is allowed.
+
+**Plain HTTP blocking**: Like `AllowedWithBranchCheck`, `AllowedWithLfsCheck` requires
+HTTPS body inspection. On plain HTTP, it is blocked with HTTP 451 (default-deny for
+unverifiable restrictions).
+
