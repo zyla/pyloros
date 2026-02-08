@@ -7,6 +7,7 @@ use common::{ok_handler, TestCa, TestUpstream};
 use std::io::{BufRead, BufReader, Read as _};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
 // ---------------------------------------------------------------------------
@@ -89,6 +90,47 @@ fn spawn_proxy(config_path: &Path) -> (Child, u16) {
         .expect("timed out waiting for proxy to print listening address");
 
     (child, port)
+}
+
+/// Like `spawn_proxy`, but also collects all stderr lines into a shared buffer.
+fn spawn_proxy_with_logs(config_path: &Path) -> (Child, u16, Arc<Mutex<Vec<String>>>) {
+    let bin = assert_cmd::cargo::cargo_bin!("redlimitador");
+
+    let mut child = Command::new(bin)
+        .args(["run", "--config", config_path.to_str().unwrap()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn redlimitador binary");
+
+    let stderr = child.stderr.take().expect("no stderr");
+    let (tx, rx) = std::sync::mpsc::sync_channel::<u16>(1);
+    let logs: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let logs_clone = Arc::clone(&logs);
+
+    std::thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        let mut sent = false;
+        for line in reader.lines() {
+            let line = match line {
+                Ok(l) => l,
+                Err(_) => break,
+            };
+            if !sent {
+                if let Some(port) = parse_listening_port(&line) {
+                    let _ = tx.send(port);
+                    sent = true;
+                }
+            }
+            logs_clone.lock().unwrap().push(line);
+        }
+    });
+
+    let port = rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("timed out waiting for proxy to print listening address");
+
+    (child, port, logs)
 }
 
 /// Strip ANSI escape sequences from a string.
@@ -247,12 +289,24 @@ url = "{url}"
     toml
 }
 
-/// Run `claude -p "Say hi"` through the proxy, verify it gets a response.
+/// Run `claude -p "Say hi"` through the proxy, verify it gets a response and
+/// the proxy logged an ALLOWED request to api.anthropic.com.
+///
 /// Skipped if `claude` CLI is not installed, not authenticated, or running
 /// inside another Claude Code session (nested sessions hang).
+///
+/// NOTE: Nested `claude -p` hangs when spawned from within a Claude Code
+/// session (the Node.js event loop busy-spins after completing the API call).
+/// The root cause is unknown — it's not env vars, inherited FDs, stdin, or
+/// process group. See `devdocs/lessons/nested-claude-code-hangs.md`.
+/// Because most development on this project happens agentically, this test
+/// is at risk of silently rotting. Run it manually from a standalone terminal
+/// after changes to TLS/proxy logic:
+///   cargo test test_binary_claude_code_through_proxy -- --nocapture
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_binary_claude_code_through_proxy() {
-    // Skip if running inside another claude session (nested claude -p hangs)
+    // Skip if running inside another claude session (nested claude -p hangs;
+    // see devdocs/lessons/nested-claude-code-hangs.md)
     if std::env::var("CLAUDECODE").is_ok() {
         eprintln!("running inside Claude Code session, skipping");
         return;
@@ -288,7 +342,7 @@ async fn test_binary_claude_code_through_proxy() {
     );
     std::fs::write(&config_path, &config_toml).unwrap();
 
-    let (mut child, proxy_port) = spawn_proxy(&config_path);
+    let (mut child, proxy_port, proxy_logs) = spawn_proxy_with_logs(&config_path);
 
     let proxy_url = format!("http://127.0.0.1:{}", proxy_port);
     let mut claude_child = Command::new("claude")
@@ -365,6 +419,18 @@ async fn test_binary_claude_code_through_proxy() {
         !stdout.trim().is_empty(),
         "claude produced empty output\nstderr: {}",
         stderr,
+    );
+
+    // Verify the proxy actually intercepted an Anthropic API call
+    let logs = proxy_logs.lock().unwrap();
+    let saw_anthropic = logs.iter().any(|line| {
+        let clean = strip_ansi(line);
+        clean.contains("ALLOWED") && clean.contains("api.anthropic.com")
+    });
+    assert!(
+        saw_anthropic,
+        "proxy did not log an ALLOWED request to api.anthropic.com\nproxy logs:\n{}",
+        logs.join("\n"),
     );
 
     eprintln!("claude response: {}", stdout.trim());
