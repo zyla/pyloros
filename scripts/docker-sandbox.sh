@@ -112,15 +112,22 @@ docker info >/dev/null 2>&1 || die "Docker is not running or not accessible"
 
 # Auto-detect binary
 if [[ -z "$BINARY" ]]; then
-    if [[ -x "$PROJECT_DIR/target/x86_64-unknown-linux-musl/release/redlimitador" ]]; then
-        BINARY="$PROJECT_DIR/target/x86_64-unknown-linux-musl/release/redlimitador"
-    elif [[ -x "$PROJECT_DIR/target/release/redlimitador" ]]; then
-        BINARY="$PROJECT_DIR/target/release/redlimitador"
-        echo "Warning: Using glibc binary ($BINARY)." >&2
-        echo "  This may not work in all containers. For best compatibility," >&2
-        echo "  build with: cargo build --release --target x86_64-unknown-linux-musl" >&2
-    else
-        die "Cannot find redlimitador binary. Build with 'cargo build --release' or specify --binary"
+    for _candidate in \
+        "$PROJECT_DIR/target/x86_64-unknown-linux-musl/release/redlimitador" \
+        "$PROJECT_DIR/target/release/redlimitador" \
+        "$PROJECT_DIR/target/debug/redlimitador"; do
+        if [[ -x "$_candidate" ]]; then
+            BINARY="$_candidate"
+            break
+        fi
+    done
+    if [[ -z "$BINARY" ]]; then
+        die "Cannot find redlimitador binary. Build with 'cargo build' or specify --binary"
+    fi
+    # Warn if using a glibc binary (non-musl)
+    if [[ "$BINARY" != *"musl"* ]]; then
+        log "Note: Using glibc binary ($BINARY)."
+        log "  For best container compatibility, build with: cargo build --release --target x86_64-unknown-linux-musl"
     fi
 fi
 [[ -x "$BINARY" ]] || die "Binary is not executable: $BINARY"

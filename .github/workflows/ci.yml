@@ -73,17 +73,6 @@ jobs:
           path: |
             test-report.md
             test-report.html
-
-  docker-sandbox:
-    name: Docker Sandbox
-    needs: check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Build release binary
-        run: cargo build --release
       - name: Run Docker sandbox tests
         run: scripts/test-docker-sandbox.sh
 

@@ -39,14 +39,15 @@ fi
 BINARY=""
 for candidate in \
     "$PROJECT_DIR/target/x86_64-unknown-linux-musl/release/redlimitador" \
-    "$PROJECT_DIR/target/release/redlimitador"; do
+    "$PROJECT_DIR/target/release/redlimitador" \
+    "$PROJECT_DIR/target/debug/redlimitador"; do
     if [[ -x "$candidate" ]]; then
         BINARY="$candidate"
         break
     fi
 done
 if [[ -z "$BINARY" ]]; then
-    echo "Cannot find redlimitador binary. Run 'cargo build --release' first."
+    echo "Cannot find redlimitador binary. Run 'cargo build' first."
     exit 1
 fi
 BINARY_FLAG="--binary $BINARY"
