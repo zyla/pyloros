@@ -52,7 +52,7 @@ services:
       - external
       - internal
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080"]
+      test: ["CMD", "nc", "-z", "127.0.0.1", "8080"]
       interval: 2s
       timeout: 3s
       retries: 15

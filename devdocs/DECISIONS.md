@@ -151,9 +151,11 @@ workflow already builds a statically-linked musl binary and verifies it — dupl
 that build in a multi-stage Dockerfile would add complexity and build time for no
 benefit. The binary is copied to the build context root before `docker build`.
 
-### Healthcheck with wget
+### Healthcheck with nc
 
 Alpine doesn't include bash, so the previous `bash -c 'echo > /dev/tcp/...'` healthcheck
-doesn't work. `wget --spider -q http://localhost:8080` is the idiomatic Alpine approach
-and is available without installing extra packages.
+doesn't work. Since the proxy returns HTTP 451 for unmatched requests (including
+healthcheck probes to `http://127.0.0.1:8080/`), HTTP-level checks like `wget --spider`
+fail. Instead, `nc -z 127.0.0.1 8080` performs a TCP port check — available via BusyBox
+in Alpine without extra packages.
 
