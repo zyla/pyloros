@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::{ok_handler, TestCa, TestUpstream};
+use common::{ok_handler, TestCa, TestReport, TestUpstream};
 use std::io::{BufRead, BufReader, Read as _};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -92,6 +92,12 @@ fn spawn_proxy(config_path: &Path) -> (Child, u16) {
     (child, port)
 }
 
+/// Spawn the proxy binary with reporting.
+fn spawn_proxy_reported(t: &TestReport, config_path: &Path) -> (Child, u16) {
+    t.setup("Spawn proxy binary");
+    spawn_proxy(config_path)
+}
+
 /// Like `spawn_proxy`, but also collects all stderr lines into a shared buffer.
 fn spawn_proxy_with_logs(config_path: &Path) -> (Child, u16, Arc<Mutex<Vec<String>>>) {
     let bin = assert_cmd::cargo::cargo_bin!("redlimitador");
@@ -131,6 +137,15 @@ fn spawn_proxy_with_logs(config_path: &Path) -> (Child, u16, Arc<Mutex<Vec<Strin
         .expect("timed out waiting for proxy to print listening address");
 
     (child, port, logs)
+}
+
+/// Spawn the proxy binary with log capture and reporting.
+fn spawn_proxy_with_logs_reported(
+    t: &TestReport,
+    config_path: &Path,
+) -> (Child, u16, Arc<Mutex<Vec<String>>>) {
+    t.setup("Spawn proxy binary (with log capture)");
+    spawn_proxy_with_logs(config_path)
 }
 
 /// Strip ANSI escape sequences from a string.
@@ -199,6 +214,17 @@ fn curl_get(proxy_port: u16, url: &str, ca_cert_path: &str) -> (u16, String, Str
     (status, body.to_string(), stderr)
 }
 
+/// Run curl through the proxy with reporting.
+fn curl_get_reported(
+    t: &TestReport,
+    proxy_port: u16,
+    url: &str,
+    ca_cert_path: &str,
+) -> (u16, String, String) {
+    t.action(format!("curl GET {}", url));
+    curl_get(proxy_port, url, ca_cert_path)
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -206,8 +232,16 @@ fn curl_get(proxy_port: u16, url: &str, ca_cert_path: &str) -> (u16, String, Str
 /// Spawn the binary, curl an allowed HTTPS request, verify 200 + body.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_binary_allowed_get_returns_200() {
+    let t = test_report!("Binary: allowed HTTPS GET returns 200");
+
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start(&ca, ok_handler("hello binary")).await;
+    let upstream = TestUpstream::start_reported(
+        &t,
+        &ca,
+        ok_handler("hello binary"),
+        "returns 'hello binary'",
+    )
+    .await;
 
     let tmp = TempDir::new().unwrap();
     let config_path = tmp.path().join("config.toml");
@@ -220,12 +254,13 @@ async fn test_binary_allowed_get_returns_200() {
     );
     std::fs::write(&config_path, &config_toml).unwrap();
 
-    let (mut child, proxy_port) = spawn_proxy(&config_path);
+    let (mut child, proxy_port) = spawn_proxy_reported(&t, &config_path);
 
-    let (status, body, stderr) = curl_get(proxy_port, "https://localhost/test", &ca.cert_path);
+    let (status, body, _stderr) =
+        curl_get_reported(&t, proxy_port, "https://localhost/test", &ca.cert_path);
 
-    assert_eq!(status, 200, "expected 200, stderr: {}", stderr);
-    assert_eq!(body, "hello binary");
+    t.assert_eq("Response status", &status, &200u16);
+    t.assert_eq("Response body", &body.as_str(), &"hello binary");
 
     child.kill().ok();
     child.wait().ok();
@@ -235,8 +270,16 @@ async fn test_binary_allowed_get_returns_200() {
 /// Spawn the binary, curl a blocked HTTPS request, verify 451.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_binary_blocked_request_returns_451() {
+    let t = test_report!("Binary: blocked HTTPS request returns 451");
+
     let ca = TestCa::generate();
-    let upstream = TestUpstream::start(&ca, ok_handler("should not reach")).await;
+    let upstream = TestUpstream::start_reported(
+        &t,
+        &ca,
+        ok_handler("should not reach"),
+        "returns 'should not reach'",
+    )
+    .await;
 
     let tmp = TempDir::new().unwrap();
     let config_path = tmp.path().join("config.toml");
@@ -250,11 +293,12 @@ async fn test_binary_blocked_request_returns_451() {
     );
     std::fs::write(&config_path, &config_toml).unwrap();
 
-    let (mut child, proxy_port) = spawn_proxy(&config_path);
+    let (mut child, proxy_port) = spawn_proxy_reported(&t, &config_path);
 
-    let (status, _body, stderr) = curl_get(proxy_port, "https://localhost/test", &ca.cert_path);
+    let (status, _body, _stderr) =
+        curl_get_reported(&t, proxy_port, "https://localhost/test", &ca.cert_path);
 
-    assert_eq!(status, 451, "expected 451, stderr: {}", stderr);
+    t.assert_eq("Response status", &status, &451u16);
 
     child.kill().ok();
     child.wait().ok();
@@ -305,6 +349,8 @@ url = "{url}"
 ///   cargo test test_binary_claude_code_through_proxy -- --nocapture
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_binary_claude_code_through_proxy() {
+    let t = test_report!("Binary: Claude Code through proxy (live API)");
+
     // Skip if running inside another claude session (nested claude -p hangs;
     // see devdocs/lessons/nested-claude-code-hangs.md)
     if std::env::var("CLAUDECODE").is_ok() {
@@ -342,8 +388,9 @@ async fn test_binary_claude_code_through_proxy() {
     );
     std::fs::write(&config_path, &config_toml).unwrap();
 
-    let (mut child, proxy_port, proxy_logs) = spawn_proxy_with_logs(&config_path);
+    let (mut child, proxy_port, proxy_logs) = spawn_proxy_with_logs_reported(&t, &config_path);
 
+    t.action("Run `claude -p 'Say hi'` through proxy");
     let proxy_url = format!("http://127.0.0.1:{}", proxy_port);
     let mut claude_child = Command::new("claude")
         .args([
@@ -408,17 +455,10 @@ async fn test_binary_claude_code_through_proxy() {
         String::from_utf8_lossy(&buf).to_string()
     };
 
-    assert!(
-        status.success(),
-        "claude exited with {}\nstdout: {}\nstderr: {}",
-        status,
-        stdout,
-        stderr,
-    );
-    assert!(
+    t.assert_true("claude exited successfully", status.success());
+    t.assert_true(
+        "claude produced non-empty output",
         !stdout.trim().is_empty(),
-        "claude produced empty output\nstderr: {}",
-        stderr,
     );
 
     // Verify the proxy actually intercepted an Anthropic API call
@@ -427,11 +467,26 @@ async fn test_binary_claude_code_through_proxy() {
         let clean = strip_ansi(line);
         clean.contains("ALLOWED") && clean.contains("api.anthropic.com")
     });
-    assert!(
+    t.assert_true(
+        "Proxy logged ALLOWED request to api.anthropic.com",
         saw_anthropic,
-        "proxy did not log an ALLOWED request to api.anthropic.com\nproxy logs:\n{}",
-        logs.join("\n"),
     );
+
+    if !status.success() {
+        panic!(
+            "claude exited with {}\nstdout: {}\nstderr: {}",
+            status, stdout, stderr
+        );
+    }
+    if stdout.trim().is_empty() {
+        panic!("claude produced empty output\nstderr: {}", stderr);
+    }
+    if !saw_anthropic {
+        panic!(
+            "proxy did not log an ALLOWED request to api.anthropic.com\nproxy logs:\n{}",
+            logs.join("\n")
+        );
+    }
 
     eprintln!("claude response: {}", stdout.trim());
 
@@ -442,35 +497,39 @@ async fn test_binary_claude_code_through_proxy() {
 /// Run `generate-ca --out <tmpdir>`, verify cert and key files are created with valid PEM.
 #[test]
 fn test_binary_generate_ca() {
+    let t = test_report!("Binary: generate-ca creates valid PEM files");
+
     let tmp = TempDir::new().unwrap();
 
+    t.action(format!(
+        "Run `redlimitador generate-ca --out {}`",
+        tmp.path().display()
+    ));
     let bin = assert_cmd::cargo::cargo_bin!("redlimitador");
     let output = Command::new(bin)
         .args(["generate-ca", "--out", tmp.path().to_str().unwrap()])
         .output()
         .expect("failed to run generate-ca");
 
-    assert!(
-        output.status.success(),
-        "generate-ca failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    t.assert_true("generate-ca exits successfully", output.status.success());
 
     let cert_path = tmp.path().join("ca.crt");
     let key_path = tmp.path().join("ca.key");
 
-    assert!(cert_path.exists(), "ca.crt not created");
-    assert!(key_path.exists(), "ca.key not created");
+    t.assert_true("ca.crt exists", cert_path.exists());
+    t.assert_true("ca.key exists", key_path.exists());
 
     let cert_content = std::fs::read_to_string(&cert_path).unwrap();
     let key_content = std::fs::read_to_string(&key_path).unwrap();
 
-    assert!(
-        cert_content.contains("-----BEGIN CERTIFICATE-----"),
-        "ca.crt missing PEM header"
+    t.assert_contains(
+        "ca.crt has PEM header",
+        &cert_content,
+        "-----BEGIN CERTIFICATE-----",
     );
-    assert!(
-        key_content.contains("-----BEGIN PRIVATE KEY-----"),
-        "ca.key missing PEM header"
+    t.assert_contains(
+        "ca.key has PEM header",
+        &key_content,
+        "-----BEGIN PRIVATE KEY-----",
     );
 }
