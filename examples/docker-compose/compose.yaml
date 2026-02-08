@@ -11,15 +11,18 @@
 # through the proxy's allowlist rules.
 #
 # Prerequisites:
-#   1. Build the binary:  cargo build [--release]
-#   2. Generate a CA:     cargo run -- generate-ca --out ./certs/
+#   1. Generate a CA:  redlimitador generate-ca --out ./certs/
+#      (or: cargo run -- generate-ca --out ./certs/)
 #
 # Usage:
-#   # Set paths to binary and CA directory (absolute paths required)
-#   export BINARY="$(pwd)/target/debug/redlimitador"
+#   # Set path to CA directory (absolute path required)
 #   export CA_DIR="$(pwd)/certs"
 #
-#   # Start services
+#   # Start services (uses published Docker image by default)
+#   docker compose -f examples/docker-compose/compose.yaml up -d
+#
+#   # Or use a local image:
+#   export PROXY_IMAGE="my-local-image:latest"
 #   docker compose -f examples/docker-compose/compose.yaml up -d
 #
 #   # Run commands in the sandbox
@@ -30,14 +33,12 @@
 
 services:
   proxy:
-    image: ubuntu:24.04
+    image: ${PROXY_IMAGE:-ghcr.io/zyla/redlimitador:latest}
     volumes:
-      - ${BINARY:?Set BINARY to absolute path of redlimitador binary}:/usr/local/bin/redlimitador:ro
       - ./config.toml:/etc/redlimitador/config.toml:ro
       - ${CA_DIR:?Set CA_DIR to absolute path of CA certificate directory}/ca.crt:/etc/redlimitador/ca.crt:ro
       - ${CA_DIR:?Set CA_DIR to absolute path of CA certificate directory}/ca.key:/etc/redlimitador/ca.key:ro
     command:
-      - /usr/local/bin/redlimitador
       - run
       - --config
       - /etc/redlimitador/config.toml
@@ -51,7 +52,7 @@ services:
       - external
       - internal
     healthcheck:
-      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/8080'"]
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080"]
       interval: 2s
       timeout: 3s
       retries: 15
