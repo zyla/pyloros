@@ -38,6 +38,8 @@ When facing design decisions, do the simpler thing and record the decision with 
 
 `devdocs/DECISIONS.md` records implementation-level rationale and architecture details that supplement the high-level spec. Consult it when working on areas it covers (test infrastructure, TLS choices, etc.).
 
+When you learn something non-obvious (a library gotcha, a debugging trick, a pattern that worked), write it to a new file in `devdocs/lessons/` — one lesson per file, named descriptively (e.g., `rcgen-ca-cert-chain.md`). Before starting work on a topic, scan existing lessons with `ls devdocs/lessons/` for relevant prior knowledge.
+
 IMPORTANT: Commit immediately and automatically whenever a piece of work is done and verified. NEVER wait for the user to say "commit" — if it's done, commit it. This applies to every change: code, config, docs, anything. Don't accumulate changes. When following a multi-phase plan, commit after each phase passes its verification tests.
 
 IMPORTANT: Every requirement in SPEC.md must be verified by tests. Prefer e2e tests by default; use unit tests only when e2e testing is not feasible for a particular requirement. Don't just wing it — if a feature isn't tested, it's not done.
@@ -106,8 +108,8 @@ merge conflicts:
   tests for a new feature into an existing test file.
 - **Shared infra**: Add new helpers to `tests/common/mod.rs` only when needed by
   multiple test files. Feature-specific helpers stay in the test file.
-- **TASKS.md / SPEC.md**: These are shared docs that will conflict. Keep edits
-  minimal and well-scoped. Rebase before merging.
+- **SPEC.md**: Shared doc that will conflict. Keep edits minimal and well-scoped.
+  Rebase before merging.
 
 ## Tests
 
