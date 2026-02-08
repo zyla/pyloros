@@ -72,6 +72,7 @@ The optional `branches` field restricts which refs a push can target. It is only
 - Patterns starting with `refs/` are matched literally (escape hatch for tags, notes, etc.).
 - Omitting `branches` means any ref is allowed.
 - If a push updates multiple refs and **any** ref is disallowed, the **entire push** is blocked.
+- When a push is blocked by branch restrictions, the proxy returns a proper git `receive-pack` response (HTTP 200 with `report-status` and sideband error messages) instead of HTTP 451. This allows git clients to display clear per-ref errors like `! [remote rejected] main -> main (blocked by proxy policy)`.
 
 See `DECISIONS.md` for implementation details (smart HTTP endpoint mapping, pkt-line inspection, compilation model).
 
