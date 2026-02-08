@@ -514,13 +514,15 @@ async fn test_git_push_branch_blocked_shows_error_message() {
         "git push fails (branch blocked)",
         output.status.code().unwrap() != 0,
     );
-    t.assert_true(
+    t.assert_contains(
         "stderr contains 'blocked by proxy policy'",
-        stderr.contains("blocked by proxy policy"),
+        &stderr,
+        "blocked by proxy policy",
     );
-    t.assert_true(
+    t.assert_contains(
         "stderr contains 'remote rejected'",
-        stderr.contains("remote rejected"),
+        &stderr,
+        "remote rejected",
     );
 
     proxy.shutdown();
