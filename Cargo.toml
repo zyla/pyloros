@@ -6,9 +6,9 @@ description = "A filtering HTTPS proxy for agent network access control"
 license = "MIT"
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
-hyper = { version = "1", features = ["full"] }
-hyper-util = { version = "0.1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "signal", "time"] }
+hyper = { version = "1", features = ["http1", "http2", "server", "client"] }
+hyper-util = { version = "0.1", features = ["tokio", "server-auto", "http1", "http2"] }
 http-body-util = "0.1"
 bytes = "1"
 rustls = "0.23"
