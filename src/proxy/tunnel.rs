@@ -15,13 +15,14 @@ use tokio_rustls::{TlsAcceptor, TlsConnector};
 use super::response::{blocked_response, error_response, git_blocked_push_response};
 use crate::error::{Error, Result};
 use crate::filter::pktline;
-use crate::filter::{FilterEngine, FilterResult, RequestInfo};
+use crate::filter::{CredentialEngine, FilterEngine, FilterResult, RequestInfo};
 use crate::tls::MitmCertificateGenerator;
 
 /// Handles CONNECT tunnels with TLS MITM
 pub struct TunnelHandler {
     mitm_generator: Arc<MitmCertificateGenerator>,
     filter_engine: Arc<FilterEngine>,
+    credential_engine: Arc<CredentialEngine>,
     upstream_port_override: Option<u16>,
     upstream_tls_config: Option<Arc<ClientConfig>>,
     log_allowed_requests: bool,
@@ -32,10 +33,12 @@ impl TunnelHandler {
     pub fn new(
         mitm_generator: Arc<MitmCertificateGenerator>,
         filter_engine: Arc<FilterEngine>,
+        credential_engine: Arc<CredentialEngine>,
     ) -> Self {
         Self {
             mitm_generator,
             filter_engine,
+            credential_engine,
             upstream_port_override: None,
             upstream_tls_config: None,
             log_allowed_requests: true,
@@ -167,7 +170,7 @@ impl TunnelHandler {
                 // Buffer the request body to inspect pkt-line refs
                 // TODO: optimize by reading only the pkt-line prefix, then chaining
                 // with the remaining stream for forwarding
-                let (parts, body) = req.into_parts();
+                let (mut parts, body) = req.into_parts();
                 let body_bytes = body
                     .collect()
                     .await
@@ -189,6 +192,10 @@ impl TunnelHandler {
                     }
                     return Ok(git_blocked_push_response(&body_bytes, &blocked));
                 }
+
+                // Inject credentials
+                self.credential_engine
+                    .inject(&request_info, &mut parts.headers);
 
                 // Forward with the buffered body
                 let connect_port = self.upstream_port_override.unwrap_or(port);
@@ -230,6 +237,11 @@ impl TunnelHandler {
         // Forward the request to the actual server
         let connect_port = self.upstream_port_override.unwrap_or(port);
         let result = if is_websocket {
+            // Inject credentials into the WebSocket request before forwarding
+            let (mut parts, body) = req.into_parts();
+            self.credential_engine
+                .inject(&request_info, &mut parts.headers);
+            let req = Request::from_parts(parts, body);
             forward_websocket(
                 req,
                 host.to_string(),
@@ -238,7 +250,9 @@ impl TunnelHandler {
             )
             .await
         } else {
-            let (parts, body) = req.into_parts();
+            let (mut parts, body) = req.into_parts();
+            self.credential_engine
+                .inject(&request_info, &mut parts.headers);
             let req = rebuild_request_for_upstream(parts, body.boxed(), host, connect_port);
             match req {
                 Ok(req) => {

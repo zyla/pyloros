@@ -154,6 +154,60 @@ url = "not-a-url"
     t.assert_true("Exit failure", !output.status.success());
 }
 
+#[test]
+fn validate_config_with_credentials() {
+    let t = test_report!("validate-config with credentials");
+
+    let dir = TempDir::new().unwrap();
+    let config_path = dir.path().join("config.toml");
+    fs::write(
+        &config_path,
+        r#"
+[[rules]]
+method = "*"
+url = "https://api.example.com/*"
+
+[[credentials]]
+url = "https://api.example.com/*"
+header = "x-api-key"
+value = "literal-key"
+
+[[credentials]]
+url = "https://other.com/*"
+header = "authorization"
+value = "Bearer tok"
+"#,
+    )
+    .unwrap();
+
+    let output = run_cli_reported(
+        &t,
+        &["validate-config", "--config", config_path.to_str().unwrap()],
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+
+    t.assert_true("Exit success", output.status.success());
+    t.assert_contains("Credentials count", &stdout, "Credentials: 2");
+    t.assert_contains(
+        "Cred 1",
+        &stdout,
+        "1. header=x-api-key url=https://api.example.com/*",
+    );
+    t.assert_contains(
+        "Cred 2",
+        &stdout,
+        "2. header=authorization url=https://other.com/*",
+    );
+    t.assert_contains(
+        "Compilation success",
+        &stdout,
+        "All 2 credentials compiled successfully.",
+    );
+    // Values must never appear in output
+    t.assert_not_contains("no secret in output", &stdout, "literal-key");
+    t.assert_not_contains("no bearer in output", &stdout, "Bearer tok");
+}
+
 // ---------- generate-ca ----------
 
 #[test]

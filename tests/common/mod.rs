@@ -625,7 +625,17 @@ impl TestProxy {
         rules: Vec<redlimitador::config::Rule>,
         upstream_port: u16,
     ) -> Self {
-        Self::start_inner(ca, rules, upstream_port).await
+        Self::start_inner(ca, rules, Vec::new(), upstream_port).await
+    }
+
+    /// Start a proxy with credential injection.
+    pub async fn start_with_credentials(
+        ca: &TestCa,
+        rules: Vec<redlimitador::config::Rule>,
+        credentials: Vec<redlimitador::config::Credential>,
+        upstream_port: u16,
+    ) -> Self {
+        Self::start_inner(ca, rules, credentials, upstream_port).await
     }
 
     /// Start a proxy with reporting.
@@ -657,12 +667,13 @@ impl TestProxy {
             .collect::<Vec<_>>()
             .join(", ");
         report.setup(format!("Proxy with rules: [{}]", desc));
-        Self::start_inner(ca, rules, upstream_port).await
+        Self::start_inner(ca, rules, Vec::new(), upstream_port).await
     }
 
     async fn start_inner(
         ca: &TestCa,
         rules: Vec<redlimitador::config::Rule>,
+        credentials: Vec<redlimitador::config::Credential>,
         upstream_port: u16,
     ) -> Self {
         let mut config = Config::minimal(
@@ -671,6 +682,7 @@ impl TestProxy {
             ca.key_path.clone(),
         );
         config.rules = rules;
+        config.credentials = credentials;
         config.logging.log_allowed_requests = false;
         config.logging.log_blocked_requests = false;
 

@@ -99,6 +99,19 @@ subcommands:
 - Separate control over logging of allowed and blocked requests (e.g., log only blocked to reduce noise, or only allowed for auditing)
 - Error messages for failed upstream requests must include the request method and URL for diagnostics
 
+### Credential Injection
+The proxy can inject credentials (API keys, tokens) into outgoing requests so the agent never sees real secrets, preventing credential exfiltration.
+
+- Credentials are configured in `[[credentials]]` sections in the config file
+- Each credential specifies a URL pattern, a header name, and a header value
+- Values support `${ENV_VAR}` placeholders resolved at startup from environment variables
+- At request time (HTTPS/MITM path only), if a request URL matches a credential's URL pattern, the proxy injects/overwrites the specified header before forwarding upstream
+- Credentials are **not** injected for plain HTTP requests (only HTTPS CONNECT tunnel)
+- If multiple credentials match the same request and set the same header, last match wins (config file order)
+- Multiple credentials matching different headers on the same request all get injected
+- The `validate-config` command displays credential count and URL patterns (never values)
+- Credential header values are never logged; only the header name and match status are logged at debug level
+
 ## Technical Decisions
 
 - Explicit HTTP proxy (no iptables)
@@ -154,6 +167,17 @@ url = "https://github.com/myorg/*"
 git = "push"
 url = "https://github.com/myorg/agent-workspace"
 branches = ["feature/*", "fix/*"]
+
+# Credential injection — inject API keys/tokens into matching requests
+[[credentials]]
+url = "https://api.anthropic.com/*"
+header = "x-api-key"
+value = "${ANTHROPIC_API_KEY}"
+
+[[credentials]]
+url = "https://api.openai.com/*"
+header = "authorization"
+value = "Bearer ${OPENAI_API_KEY}"
 ```
 
 ## Testing

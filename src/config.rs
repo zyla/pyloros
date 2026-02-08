@@ -19,6 +19,21 @@ pub struct Config {
     /// Allowlist rules
     #[serde(default)]
     pub rules: Vec<Rule>,
+
+    /// Credential injection entries
+    #[serde(default)]
+    pub credentials: Vec<Credential>,
+}
+
+/// A credential to inject into matching outgoing requests
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Credential {
+    /// URL pattern to match (same syntax as rule URLs)
+    pub url: String,
+    /// Header name to inject/overwrite
+    pub header: String,
+    /// Header value (supports `${ENV_VAR}` placeholders)
+    pub value: String,
 }
 
 /// Proxy-specific configuration
@@ -178,6 +193,11 @@ impl Config {
             Self::validate_rule(i, rule)?;
         }
 
+        // Validate each credential
+        for (i, cred) in config.credentials.iter().enumerate() {
+            Self::validate_credential(i, cred)?;
+        }
+
         Ok(config)
     }
 
@@ -226,6 +246,21 @@ impl Config {
         Ok(())
     }
 
+    /// Validate a single credential entry
+    fn validate_credential(index: usize, cred: &Credential) -> Result<()> {
+        let ctx = |msg: &str| Error::config(format!("Credential #{}: {}", index + 1, msg));
+
+        if cred.header.is_empty() {
+            return Err(ctx("header name must not be empty"));
+        }
+
+        // Validate URL pattern syntax
+        use crate::filter::matcher::UrlPattern;
+        UrlPattern::new(&cred.url).map_err(|e| ctx(&format!("invalid URL pattern: {}", e)))?;
+
+        Ok(())
+    }
+
     /// Create a minimal configuration with just the essentials
     pub fn minimal(bind_address: String, ca_cert: String, ca_key: String) -> Self {
         Self {
@@ -238,8 +273,41 @@ impl Config {
             },
             logging: LoggingConfig::default(),
             rules: Vec::new(),
+            credentials: Vec::new(),
         }
     }
+}
+
+/// Resolve `${ENV_VAR}` placeholders in a credential value string.
+///
+/// Replaces all `${...}` patterns with the corresponding environment variable value.
+/// Returns an error if any referenced variable is not set.
+pub fn resolve_credential_value(value: &str) -> Result<String> {
+    let mut result = String::with_capacity(value.len());
+    let mut rest = value;
+
+    while let Some(start) = rest.find("${") {
+        result.push_str(&rest[..start]);
+        let after_open = &rest[start + 2..];
+        let end = after_open
+            .find('}')
+            .ok_or_else(|| Error::config("unclosed ${...} in credential value"))?;
+        let var_name = &after_open[..end];
+        if var_name.is_empty() {
+            return Err(Error::config("empty variable name in ${} placeholder"));
+        }
+        let var_value = std::env::var(var_name).map_err(|_| {
+            Error::config(format!(
+                "environment variable '{}' is not set (required by credential)",
+                var_name
+            ))
+        })?;
+        result.push_str(&var_value);
+        rest = &after_open[end + 1..];
+    }
+    result.push_str(rest);
+
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -592,5 +660,107 @@ branches = ["main"]
         t.assert_true("parse error", result.is_err());
         let err = result.unwrap_err().to_string();
         t.assert_contains("error mentions git rules", &err, "git rules");
+    }
+
+    // --- Credential config tests ---
+
+    #[test]
+    fn test_parse_credentials() {
+        let t = test_report!("Parse [[credentials]] with all fields");
+        let toml = r#"
+[[credentials]]
+url = "https://api.example.com/*"
+header = "x-api-key"
+value = "my-secret-key"
+"#;
+        let config = Config::parse(toml).unwrap();
+        t.assert_eq("credential count", &config.credentials.len(), &1usize);
+        t.assert_eq(
+            "url",
+            &config.credentials[0].url.as_str(),
+            &"https://api.example.com/*",
+        );
+        t.assert_eq(
+            "header",
+            &config.credentials[0].header.as_str(),
+            &"x-api-key",
+        );
+        t.assert_eq(
+            "value",
+            &config.credentials[0].value.as_str(),
+            &"my-secret-key",
+        );
+    }
+
+    #[test]
+    fn test_parse_no_credentials() {
+        let t = test_report!("Config with no credentials (backward compat)");
+        let config = Config::parse("").unwrap();
+        t.assert_true("empty credentials", config.credentials.is_empty());
+    }
+
+    #[test]
+    fn test_credential_reject_empty_header() {
+        let t = test_report!("Reject credential with empty header name");
+        let toml = r#"
+[[credentials]]
+url = "https://api.example.com/*"
+header = ""
+value = "secret"
+"#;
+        let result = Config::parse(toml);
+        t.assert_true("parse error", result.is_err());
+        let err = result.unwrap_err().to_string();
+        t.assert_contains("error mentions header", &err, "header");
+    }
+
+    #[test]
+    fn test_credential_reject_invalid_url_pattern() {
+        let t = test_report!("Reject credential with invalid URL pattern");
+        let toml = r#"
+[[credentials]]
+url = "not-a-url"
+header = "x-api-key"
+value = "secret"
+"#;
+        let result = Config::parse(toml);
+        t.assert_true("parse error", result.is_err());
+        let err = result.unwrap_err().to_string();
+        t.assert_contains("error mentions URL pattern", &err, "URL pattern");
+    }
+
+    #[test]
+    fn test_resolve_credential_value_env_var() {
+        let t = test_report!("${ENV_VAR} resolution works");
+        std::env::set_var("TEST_CRED_KEY_ABC", "resolved-value");
+        let result = resolve_credential_value("${TEST_CRED_KEY_ABC}").unwrap();
+        t.assert_eq("resolved", &result.as_str(), &"resolved-value");
+        std::env::remove_var("TEST_CRED_KEY_ABC");
+    }
+
+    #[test]
+    fn test_resolve_credential_value_unset_var() {
+        let t = test_report!("${UNSET_VAR} fails with descriptive error");
+        std::env::remove_var("TEST_CRED_UNSET_XYZ");
+        let result = resolve_credential_value("${TEST_CRED_UNSET_XYZ}");
+        t.assert_true("error", result.is_err());
+        let err = result.unwrap_err().to_string();
+        t.assert_contains("names the variable", &err, "TEST_CRED_UNSET_XYZ");
+    }
+
+    #[test]
+    fn test_resolve_credential_value_mixed() {
+        let t = test_report!("Mixed literal + env var resolves correctly");
+        std::env::set_var("TEST_CRED_TOKEN_MIX", "tok123");
+        let result = resolve_credential_value("Bearer ${TEST_CRED_TOKEN_MIX}").unwrap();
+        t.assert_eq("resolved", &result.as_str(), &"Bearer tok123");
+        std::env::remove_var("TEST_CRED_TOKEN_MIX");
+    }
+
+    #[test]
+    fn test_resolve_credential_value_literal_only() {
+        let t = test_report!("Plain literal with no placeholders passes through");
+        let result = resolve_credential_value("just-a-literal").unwrap();
+        t.assert_eq("passthrough", &result.as_str(), &"just-a-literal");
     }
 }

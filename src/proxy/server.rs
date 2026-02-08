@@ -12,13 +12,14 @@ use super::handler::ProxyHandler;
 use super::tunnel::TunnelHandler;
 use crate::config::Config;
 use crate::error::{Error, Result};
-use crate::filter::FilterEngine;
+use crate::filter::{CredentialEngine, FilterEngine};
 use crate::tls::{CertificateAuthority, MitmCertificateGenerator};
 
 /// The main proxy server
 pub struct ProxyServer {
     config: Config,
     filter_engine: Arc<FilterEngine>,
+    credential_engine: Arc<CredentialEngine>,
     mitm_generator: Arc<MitmCertificateGenerator>,
     listener: Option<TcpListener>,
     upstream_port_override: Option<u16>,
@@ -46,14 +47,19 @@ impl ProxyServer {
         // Build filter engine
         let filter_engine = Arc::new(FilterEngine::new(config.rules.clone())?);
 
+        // Build credential engine
+        let credential_engine = Arc::new(CredentialEngine::new(config.credentials.clone())?);
+
         tracing::info!(
             rules = filter_engine.rule_count(),
+            credentials = credential_engine.credential_count(),
             "Filter engine initialized"
         );
 
         Ok(Self {
             config,
             filter_engine,
+            credential_engine,
             mitm_generator,
             listener: None,
             upstream_port_override: None,
@@ -65,11 +71,13 @@ impl ProxyServer {
     pub fn with_components(
         config: Config,
         filter_engine: Arc<FilterEngine>,
+        credential_engine: Arc<CredentialEngine>,
         mitm_generator: Arc<MitmCertificateGenerator>,
     ) -> Self {
         Self {
             config,
             filter_engine,
+            credential_engine,
             mitm_generator,
             listener: None,
             upstream_port_override: None,
@@ -188,12 +196,15 @@ impl ProxyServer {
     }
 
     fn make_tunnel_handler(&self) -> TunnelHandler {
-        let mut handler =
-            TunnelHandler::new(self.mitm_generator.clone(), self.filter_engine.clone())
-                .with_request_logging(
-                    self.config.logging.log_allowed_requests,
-                    self.config.logging.log_blocked_requests,
-                );
+        let mut handler = TunnelHandler::new(
+            self.mitm_generator.clone(),
+            self.filter_engine.clone(),
+            self.credential_engine.clone(),
+        )
+        .with_request_logging(
+            self.config.logging.log_allowed_requests,
+            self.config.logging.log_blocked_requests,
+        );
         if let Some(port) = self.upstream_port_override {
             handler = handler.with_upstream_port_override(port);
         }
