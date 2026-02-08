@@ -34,11 +34,9 @@ cargo run -- validate-config --config config.toml        # Validate config
 
 After context compaction (when conversation history is summarized), reread `devdocs/SPEC.md` and any other relevant spec documents to stay on track with requirements and guidelines.
 
-When facing design decisions, do the simpler thing but save it in devdocs/QUESTIONS.md for further consideration. Once a question is resolved, move the decision and rationale to `devdocs/DECISIONS.md`.
+When facing design decisions, do the simpler thing and record the decision with rationale directly in `devdocs/DECISIONS.md`. Also document any tool/build-system problems encountered there.
 
 `devdocs/DECISIONS.md` records implementation-level rationale and architecture details that supplement the high-level spec. Consult it when working on areas it covers (test infrastructure, TLS choices, etc.).
-
-Any problems encountered with tools (build system, etc.) should also be documented in QUESTIONS.md under "Tool Issues Encountered" for future reference.
 
 IMPORTANT: Commit immediately and automatically whenever a piece of work is done and verified. NEVER wait for the user to say "commit" — if it's done, commit it. This applies to every change: code, config, docs, anything. Don't accumulate changes. When following a multi-phase plan, commit after each phase passes its verification tests.
 
