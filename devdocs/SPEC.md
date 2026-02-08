@@ -121,6 +121,10 @@ Mutation testing with `cargo-mutants` validates test suite quality. It is run ma
 
 When adding new code paths with conditional logic (especially `if`, `match`, `==`/`!=`), ensure tests exercise both branches. Default-port matching, header presence checks, and error classification are common sources of surviving mutants.
 
+### Git Smart HTTP Tests
+
+Integration tests verify that git smart HTTP operations (clone, push) work correctly through the proxy's HTTPS MITM pipeline. Tests run a local git smart HTTP server (via `git http-backend` CGI), route `git clone`/`git push` commands through the proxy, and verify end-to-end correctness.
+
 ### Test Report Generation
 
 Tests produce a human-readable report showing, for each test: what was done, what the result was, and what assertions were checked. The report is tightly coupled to actual test execution — descriptions are derived from real parameters (URLs, rules, CLI args), making drift between tests and report impossible.
