@@ -21,6 +21,7 @@ The intended deployment is one proxy per VM/container running an AI agent. All o
 - Hop-by-hop header stripping per RFC 7230 for forwarded HTTP requests
 - CONNECT restricted to port 443 (non-443 CONNECT requests are blocked)
 - Allowlist rule engine: requests must match at least one rule to be allowed; everything else is blocked with HTTP 451
+- **Default-deny for unverifiable restrictions**: when a rule requires fine-grained inspection (e.g. branch-level body inspection for git push) but the request arrives on a code path that cannot perform that inspection (e.g. plain HTTP instead of HTTPS CONNECT), the request is blocked rather than silently allowed. If we can't verify a restriction, we deny.
 - TOML configuration file
 
 ### Rule Matching
@@ -28,6 +29,51 @@ The intended deployment is one proxy per VM/container running an AI agent. All o
 - `*` wildcard matches any character sequence (including across segments) in host, path, and query
 - Method `*` matches any HTTP method
 - Example: `https://*.github.com/api/*` matches `https://foo.github.com/api/v1/repos`
+
+### Git Rules
+
+Git-specific rules provide a high-level way to control git smart HTTP operations (clone, fetch, push) without requiring users to understand the underlying protocol endpoints.
+
+A rule has **either** `method` (HTTP rule) **or** `git` (git rule), never both. Having both is a config validation error. `websocket = true` and `git` are mutually exclusive.
+
+```toml
+# Allow clone/fetch from any repo in myorg
+[[rules]]
+git = "fetch"
+url = "https://github.com/myorg/*"
+
+# Allow push only to a specific repo, only to feature branches
+[[rules]]
+git = "push"
+url = "https://github.com/myorg/deploy-tools"
+branches = ["feature/*", "fix/*"]
+
+# Allow all git operations to any github.com repo
+[[rules]]
+git = "*"
+url = "https://github.com/*"
+```
+
+#### `git` field values
+
+| Value   | Operations allowed   |
+|---------|---------------------|
+| `fetch` | clone, fetch, pull  |
+| `push`  | push                |
+| `*`     | all                 |
+
+The `url` is the repo base URL (what you'd pass to `git clone`).
+
+#### Branch restriction
+
+The optional `branches` field restricts which refs a push can target. It is only valid on `git = "push"` or `git = "*"` rules; using it with `git = "fetch"` is a config error.
+
+- Bare patterns like `feature/*` match against `refs/heads/feature/*`.
+- Patterns starting with `refs/` are matched literally (escape hatch for tags, notes, etc.).
+- Omitting `branches` means any ref is allowed.
+- If a push updates multiple refs and **any** ref is disallowed, the **entire push** is blocked.
+
+See `DECISIONS.md` for implementation details (smart HTTP endpoint mapping, pkt-line inspection, compilation model).
 
 ### Protocol Support
 - HTTP/1.1
@@ -96,6 +142,16 @@ url = "https://*.github.com/*"
 method = "GET"
 url = "wss://realtime.example.com/socket"
 websocket = true
+
+# Git-specific rules
+[[rules]]
+git = "fetch"
+url = "https://github.com/myorg/*"
+
+[[rules]]
+git = "push"
+url = "https://github.com/myorg/agent-workspace"
+branches = ["feature/*", "fix/*"]
 ```
 
 ## Testing
@@ -124,7 +180,14 @@ When adding new code paths with conditional logic (especially `if`, `match`, `==
 
 ### Git Smart HTTP Tests
 
-Integration tests verify that git smart HTTP operations (clone, push) work correctly through the proxy's HTTPS MITM pipeline. Tests run a local git smart HTTP server (via `git http-backend` CGI), route `git clone`/`git push` commands through the proxy, and verify end-to-end correctness.
+Integration tests verify that git smart HTTP operations (clone, push) work correctly through the proxy's HTTPS MITM pipeline using git-specific config rules (`git = "fetch"`, `git = "push"`, `git = "*"`). Tests run a local git smart HTTP server (via `git http-backend` CGI), route `git clone`/`git push` commands through the proxy, and verify end-to-end correctness.
+
+Test coverage includes:
+- Basic clone/push through proxy with git rules (`git_smart_http_test.rs`)
+- Operation-level filtering: fetch-only rule blocks push, push-only blocks clone (`git_rules_test.rs`)
+- Repo-level filtering: URL patterns restrict which repos are accessible (`git_rules_test.rs`)
+- Branch-level restriction: `branches` patterns allow/block pushes to specific refs (`git_rules_test.rs`)
+- Pkt-line parser unit tests: ref extraction, capabilities handling, branch matching (`pktline.rs`)
 
 ### Test Report Generation
 

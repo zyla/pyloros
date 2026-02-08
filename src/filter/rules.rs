@@ -84,15 +84,21 @@ pub struct CompiledRule {
     url: UrlPattern,
     /// Whether this rule is for WebSocket connections
     websocket: bool,
+    /// Branch patterns for git push restriction (if Some, body inspection required)
+    branch_patterns: Option<Vec<PatternMatcher>>,
 }
 
 impl CompiledRule {
-    /// Compile a rule from configuration
+    /// Compile a rule from configuration (for non-git HTTP rules)
     pub fn compile(rule: &Rule) -> Result<Self> {
-        let method = if rule.method == "*" {
+        let method_str = rule
+            .method
+            .as_deref()
+            .expect("compile() called on git rule — use compile_git_rules() instead");
+        let method = if method_str == "*" {
             None
         } else {
-            Some(PatternMatcher::new(&rule.method.to_uppercase())?)
+            Some(PatternMatcher::new(&method_str.to_uppercase())?)
         };
 
         let url = UrlPattern::new(&rule.url)?;
@@ -101,6 +107,96 @@ impl CompiledRule {
             method,
             url,
             websocket: rule.websocket,
+            branch_patterns: None,
+        })
+    }
+
+    /// Compile a git rule into multiple CompiledRules for the smart HTTP endpoints.
+    pub fn compile_git_rules(rule: &Rule) -> Result<Vec<Self>> {
+        let git_op = rule
+            .git
+            .as_deref()
+            .expect("compile_git_rules called on non-git rule");
+        let base_url = &rule.url;
+
+        let mut rules = Vec::new();
+
+        let needs_fetch = git_op == "fetch" || git_op == "*";
+        let needs_push = git_op == "push" || git_op == "*";
+
+        if needs_fetch {
+            // GET <repo>/info/refs?service=git-upload-pack
+            rules.push(Self::compile_git_endpoint(
+                base_url,
+                "/info/refs",
+                Some("service=git-upload-pack"),
+                "GET",
+                None,
+            )?);
+            // POST <repo>/git-upload-pack
+            rules.push(Self::compile_git_endpoint(
+                base_url,
+                "/git-upload-pack",
+                None,
+                "POST",
+                None,
+            )?);
+        }
+
+        if needs_push {
+            // GET <repo>/info/refs?service=git-receive-pack
+            rules.push(Self::compile_git_endpoint(
+                base_url,
+                "/info/refs",
+                Some("service=git-receive-pack"),
+                "GET",
+                None,
+            )?);
+            // POST <repo>/git-receive-pack (with optional branch patterns)
+            let branch_patterns = rule
+                .branches
+                .as_ref()
+                .map(|branches| {
+                    branches
+                        .iter()
+                        .map(|b| PatternMatcher::new(b))
+                        .collect::<Result<Vec<_>>>()
+                })
+                .transpose()?;
+            rules.push(Self::compile_git_endpoint(
+                base_url,
+                "/git-receive-pack",
+                None,
+                "POST",
+                branch_patterns,
+            )?);
+        }
+
+        Ok(rules)
+    }
+
+    /// Compile a single git smart HTTP endpoint rule.
+    fn compile_git_endpoint(
+        base_url: &str,
+        path_suffix: &str,
+        query: Option<&str>,
+        method: &str,
+        branch_patterns: Option<Vec<PatternMatcher>>,
+    ) -> Result<Self> {
+        // Build the full URL by appending the suffix to the base URL's path
+        let full_url = match query {
+            Some(q) => format!("{}{}?{}", base_url, path_suffix, q),
+            None => format!("{}{}", base_url, path_suffix),
+        };
+
+        let method_matcher = Some(PatternMatcher::new(&method.to_uppercase())?);
+        let url = UrlPattern::new(&full_url)?;
+
+        Ok(Self {
+            method: method_matcher,
+            url,
+            websocket: false,
+            branch_patterns,
         })
     }
 
@@ -129,6 +225,17 @@ impl CompiledRule {
     }
 }
 
+/// Result of checking a request against the filter engine
+#[derive(Debug)]
+pub enum FilterResult {
+    /// Request is blocked (no rule matched)
+    Blocked,
+    /// Request is allowed (a rule matched with no branch restriction)
+    Allowed,
+    /// Request is allowed but requires branch-level body inspection
+    AllowedWithBranchCheck(Vec<PatternMatcher>),
+}
+
 /// The filter engine that evaluates requests against rules
 #[derive(Debug, Clone)]
 pub struct FilterEngine {
@@ -139,8 +246,15 @@ pub struct FilterEngine {
 impl FilterEngine {
     /// Create a new filter engine with the given rules
     pub fn new(rules: Vec<Rule>) -> Result<Self> {
-        let compiled: Result<Vec<_>> = rules.iter().map(CompiledRule::compile).collect();
-        Ok(Self { rules: compiled? })
+        let mut compiled = Vec::new();
+        for rule in &rules {
+            if rule.git.is_some() {
+                compiled.extend(CompiledRule::compile_git_rules(rule)?);
+            } else {
+                compiled.push(CompiledRule::compile(rule)?);
+            }
+        }
+        Ok(Self { rules: compiled })
     }
 
     /// Create an empty filter engine (blocks everything)
@@ -148,11 +262,26 @@ impl FilterEngine {
         Self { rules: Vec::new() }
     }
 
-    /// Check if a request is allowed
+    /// Check a request against rules, returning detailed result
+    pub fn check(&self, request: &RequestInfo) -> FilterResult {
+        for rule in &self.rules {
+            if rule.matches(request) {
+                if let Some(ref patterns) = rule.branch_patterns {
+                    return FilterResult::AllowedWithBranchCheck(patterns.clone());
+                }
+                return FilterResult::Allowed;
+            }
+        }
+        FilterResult::Blocked
+    }
+
+    /// Check if a request is allowed (convenience wrapper around check())
     ///
-    /// Returns true if the request matches at least one rule
+    /// Returns true if the request matches at least one rule.
+    /// Note: AllowedWithBranchCheck is treated as allowed here — callers
+    /// that need branch-level inspection should use check() directly.
     pub fn is_allowed(&self, request: &RequestInfo) -> bool {
-        self.rules.iter().any(|rule| rule.matches(request))
+        !matches!(self.check(request), FilterResult::Blocked)
     }
 
     /// Get the number of rules
@@ -174,17 +303,21 @@ mod tests {
 
     fn make_rule(method: &str, url: &str) -> Rule {
         Rule {
-            method: method.to_string(),
+            method: Some(method.to_string()),
             url: url.to_string(),
             websocket: false,
+            git: None,
+            branches: None,
         }
     }
 
     fn make_ws_rule(url: &str) -> Rule {
         Rule {
-            method: "GET".to_string(),
+            method: Some("GET".to_string()),
             url: url.to_string(),
             websocket: true,
+            git: None,
+            branches: None,
         }
     }
 
@@ -433,6 +566,51 @@ mod tests {
         .unwrap();
 
         t.assert_eq("rule count", &engine.rule_count(), &2usize);
+    }
+
+    #[test]
+    fn test_git_rule_branch_check_on_http_scheme() {
+        let t = test_report!(
+            "Git rule with branches returns AllowedWithBranchCheck for http:// requests"
+        );
+        let rule = Rule {
+            method: None,
+            url: "http://example.com/repo.git".to_string(),
+            websocket: false,
+            git: Some("push".to_string()),
+            branches: Some(vec!["feature/*".to_string()]),
+        };
+        let engine = FilterEngine::new(vec![rule]).unwrap();
+
+        // POST to the git-receive-pack endpoint over http://
+        let req = RequestInfo::http(
+            "POST",
+            "http",
+            "example.com",
+            None,
+            "/repo.git/git-receive-pack",
+            None,
+        );
+        let result = engine.check(&req);
+        t.assert_true(
+            "returns AllowedWithBranchCheck (not Allowed or Blocked)",
+            matches!(result, FilterResult::AllowedWithBranchCheck(_)),
+        );
+
+        // GET discovery endpoint has no branch restriction → Allowed
+        let discovery = RequestInfo::http(
+            "GET",
+            "http",
+            "example.com",
+            None,
+            "/repo.git/info/refs",
+            Some("service=git-receive-pack"),
+        );
+        let result = engine.check(&discovery);
+        t.assert_true(
+            "discovery endpoint returns Allowed (no branch check)",
+            matches!(result, FilterResult::Allowed),
+        );
     }
 
     #[test]

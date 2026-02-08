@@ -8,17 +8,21 @@ use redlimitador::filter::{FilterEngine, RequestInfo};
 
 fn rule(method: &str, url: &str) -> Rule {
     Rule {
-        method: method.to_string(),
+        method: Some(method.to_string()),
         url: url.to_string(),
         websocket: false,
+        git: None,
+        branches: None,
     }
 }
 
 fn ws_rule(url: &str) -> Rule {
     Rule {
-        method: "GET".to_string(),
+        method: Some("GET".to_string()),
         url: url.to_string(),
         websocket: true,
+        git: None,
+        branches: None,
     }
 }
 

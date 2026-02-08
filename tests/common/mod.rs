@@ -629,12 +629,21 @@ impl TestProxy {
         let desc = rules
             .iter()
             .map(|r| {
-                format!(
-                    "`{} {}`{}",
-                    r.method,
-                    r.url,
-                    if r.websocket { " [ws]" } else { "" }
-                )
+                if let Some(ref git) = r.git {
+                    let branches_desc = r
+                        .branches
+                        .as_ref()
+                        .map(|b| format!(" branches={:?}", b))
+                        .unwrap_or_default();
+                    format!("`git={} {}`{}", git, r.url, branches_desc)
+                } else {
+                    format!(
+                        "`{} {}`{}",
+                        r.method.as_deref().unwrap_or("?"),
+                        r.url,
+                        if r.websocket { " [ws]" } else { "" }
+                    )
+                }
             })
             .collect::<Vec<_>>()
             .join(", ");
@@ -796,18 +805,231 @@ pub fn run_command_reported(
 
 pub fn rule(method: &str, url: &str) -> redlimitador::config::Rule {
     redlimitador::config::Rule {
-        method: method.to_string(),
+        method: Some(method.to_string()),
         url: url.to_string(),
         websocket: false,
+        git: None,
+        branches: None,
     }
 }
 
 pub fn ws_rule(url: &str) -> redlimitador::config::Rule {
     redlimitador::config::Rule {
-        method: "GET".to_string(),
+        method: Some("GET".to_string()),
         url: url.to_string(),
         websocket: true,
+        git: None,
+        branches: None,
     }
+}
+
+pub fn git_rule(git_op: &str, url: &str) -> redlimitador::config::Rule {
+    redlimitador::config::Rule {
+        method: None,
+        url: url.to_string(),
+        websocket: false,
+        git: Some(git_op.to_string()),
+        branches: None,
+    }
+}
+
+pub fn git_rule_with_branches(
+    git_op: &str,
+    url: &str,
+    branches: &[&str],
+) -> redlimitador::config::Rule {
+    redlimitador::config::Rule {
+        method: None,
+        url: url.to_string(),
+        websocket: false,
+        git: Some(git_op.to_string()),
+        branches: Some(branches.iter().map(|b| b.to_string()).collect()),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Git test infrastructure
+// ---------------------------------------------------------------------------
+
+/// Shared log of "METHOD path?query" strings recorded by the upstream handler.
+pub type RequestLog = Arc<Mutex<Vec<String>>>;
+
+/// Locate the `git-http-backend` binary via `git --exec-path`.
+pub fn git_http_backend_path() -> std::path::PathBuf {
+    let output = std::process::Command::new("git")
+        .arg("--exec-path")
+        .output()
+        .expect("git --exec-path failed");
+    assert!(output.status.success(), "git --exec-path returned non-zero");
+    let exec_path = String::from_utf8(output.stdout)
+        .expect("non-UTF-8 exec path")
+        .trim()
+        .to_string();
+    let backend = std::path::PathBuf::from(exec_path).join("git-http-backend");
+    assert!(
+        backend.exists(),
+        "git-http-backend not found at {:?}",
+        backend
+    );
+    backend
+}
+
+/// Create a test git repo: a source repo with a commit, then a bare clone to serve.
+/// Returns the path to the directory containing the bare repo (the GIT_PROJECT_ROOT).
+pub fn create_test_repo(dir: &std::path::Path, repo_name: &str) -> std::path::PathBuf {
+    let source_dir = dir.join("source");
+    std::fs::create_dir_all(&source_dir).unwrap();
+
+    let run = |args: &[&str], cwd: &std::path::Path| {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+
+    run(&["init"], &source_dir);
+    run(&["config", "user.email", "test@test.com"], &source_dir);
+    run(&["config", "user.name", "Test User"], &source_dir);
+
+    std::fs::write(
+        source_dir.join("README.md"),
+        "# Test Repository\nHello from git test!\n",
+    )
+    .unwrap();
+    run(&["add", "README.md"], &source_dir);
+    run(&["commit", "-m", "Initial commit"], &source_dir);
+
+    let repos_dir = dir.join("repos");
+    std::fs::create_dir_all(&repos_dir).unwrap();
+    run(
+        &[
+            "clone",
+            "--bare",
+            source_dir.to_str().unwrap(),
+            repos_dir.join(repo_name).to_str().unwrap(),
+        ],
+        dir,
+    );
+
+    repos_dir
+}
+
+/// Parse CGI response output into (status_code, headers, body).
+pub fn parse_cgi_response(output: &[u8]) -> (u16, Vec<(String, String)>, Vec<u8>) {
+    let (header_end, body_start) =
+        if let Some(pos) = output.windows(4).position(|w| w == b"\r\n\r\n") {
+            (pos, pos + 4)
+        } else if let Some(pos) = output.windows(2).position(|w| w == b"\n\n") {
+            (pos, pos + 2)
+        } else {
+            (output.len(), output.len())
+        };
+
+    let header_bytes = &output[..header_end];
+    let body = output[body_start..].to_vec();
+
+    let header_str = String::from_utf8_lossy(header_bytes);
+    let mut status = 200u16;
+    let mut headers = Vec::new();
+
+    for line in header_str.lines() {
+        if let Some(rest) = line.strip_prefix("Status:") {
+            let rest = rest.trim();
+            if let Some(code_str) = rest.split_whitespace().next() {
+                if let Ok(code) = code_str.parse::<u16>() {
+                    status = code;
+                }
+            }
+        } else if let Some((key, value)) = line.split_once(':') {
+            headers.push((key.trim().to_string(), value.trim().to_string()));
+        }
+    }
+
+    (status, headers, body)
+}
+
+/// Create an upstream handler that delegates to `git http-backend` CGI.
+/// Records each request as "METHOD path?query" in the shared log.
+pub fn git_cgi_handler(
+    backend_path: std::path::PathBuf,
+    git_root: std::path::PathBuf,
+    request_log: RequestLog,
+) -> UpstreamHandler {
+    Arc::new(move |req: Request<Incoming>| {
+        let backend_path = backend_path.clone();
+        let git_root = git_root.clone();
+        let request_log = request_log.clone();
+        Box::pin(async move {
+            let method = req.method().to_string();
+            let path = req.uri().path().to_string();
+            let query = req.uri().query().unwrap_or("").to_string();
+
+            let entry = if query.is_empty() {
+                format!("{} {}", method, path)
+            } else {
+                format!("{} {}?{}", method, path, query)
+            };
+            request_log.lock().unwrap().push(entry);
+            let content_type = req
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_string();
+            let content_length = req
+                .headers()
+                .get("content-length")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_string();
+
+            let body_bytes = req.collect().await.unwrap().to_bytes();
+
+            let mut cmd = std::process::Command::new(&backend_path);
+            cmd.env("GIT_PROJECT_ROOT", &git_root)
+                .env("GIT_HTTP_EXPORT_ALL", "1")
+                .env("PATH_INFO", &path)
+                .env("QUERY_STRING", &query)
+                .env("REQUEST_METHOD", &method)
+                .env("CONTENT_TYPE", &content_type)
+                .env("SERVER_PROTOCOL", "HTTP/1.1")
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            if !content_length.is_empty() {
+                cmd.env("CONTENT_LENGTH", &content_length);
+            }
+
+            let mut child = cmd.spawn().expect("failed to spawn git http-backend");
+
+            if !body_bytes.is_empty() {
+                use std::io::Write;
+                let stdin = child.stdin.as_mut().unwrap();
+                stdin.write_all(&body_bytes).unwrap();
+            }
+            drop(child.stdin.take());
+
+            let output = child.wait_with_output().expect("git http-backend failed");
+
+            let (status, headers, body) = parse_cgi_response(&output.stdout);
+
+            let mut builder = Response::builder().status(status);
+            for (key, value) in &headers {
+                builder = builder.header(key.as_str(), value.as_str());
+            }
+
+            Ok(builder
+                .body(Full::new(Bytes::from(body)).map_err(|e| match e {}).boxed())
+                .unwrap())
+        })
+    })
 }
 
 /// An upstream handler that accepts WebSocket upgrades and echoes messages back.

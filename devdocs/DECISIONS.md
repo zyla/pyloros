@@ -32,3 +32,46 @@ tests can use `bind_address = "127.0.0.1:0"` and discover the port at runtime.
 Live API tests check for OAuth credentials at `~/.claude/.credentials.json` and skip
 when unavailable.
 
+## Git Rules Implementation
+
+Git rules are syntactic sugar over the git smart HTTP protocol endpoints. A git rule
+compiles into internal URL matchers at rule load time, so there is no runtime overhead
+compared to writing the raw HTTP rules by hand.
+
+### Smart HTTP endpoint mapping
+
+Git smart HTTP uses four endpoints per repo:
+
+| Operation | Method | URL                                            |
+|-----------|--------|------------------------------------------------|
+| fetch discovery | GET | `<repo>/info/refs?service=git-upload-pack`  |
+| fetch data      | POST | `<repo>/git-upload-pack`                   |
+| push discovery  | GET | `<repo>/info/refs?service=git-receive-pack` |
+| push data       | POST | `<repo>/git-receive-pack`                  |
+
+A `git = "fetch"` rule expands into matchers for the first two; `git = "push"` into the
+last two; `git = "*"` into all four. The `url` from the rule is used as the `<repo>`
+prefix — wildcards in the URL carry through naturally (e.g.
+`https://github.com/org/*` → `https://github.com/org/*/info/refs?service=git-upload-pack`).
+
+### Branch restriction via pkt-line inspection
+
+The `branches` field on push rules requires inspecting the request body of the
+`POST .../git-receive-pack` request. The body format is:
+
+```
+<old-sha> <new-sha> <ref-name>\0<capabilities>\n   ← first command
+<old-sha> <new-sha> <ref-name>\n                   ← subsequent commands
+0000                                                ← flush packet
+<...pack data...>
+```
+
+Each line is prefixed with a 4-hex-digit length (pkt-line format). The ref update
+commands are plaintext and come before any binary pack data, so inspection only needs
+to buffer the first few hundred bytes.
+
+The proxy reads pkt-lines until the flush packet (`0000`), extracts the ref names from
+each command, checks them against the `branches` patterns, and either blocks the entire
+request or forwards it (re-sending the buffered pkt-lines followed by the remaining
+body stream).
+
