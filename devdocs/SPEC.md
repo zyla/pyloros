@@ -104,6 +104,7 @@ websocket = true
 - End-to-end integration tests covering all features: filtering rules, plain HTTP forwarding, HTTPS (MITM), HTTP/2, WebSocket
 - CLI integration tests for all subcommands (`run`, `generate-ca`, `validate-config`)
 - Tests run in GitHub Actions; coverage is reported
+- When testing integration with external tools (git, curl, claude CLI, etc.), always verify that traffic actually went through the proxy — don't just check that the tool succeeded. Record requests at the upstream handler or check proxy logs for expected entries.
 
 See `DECISIONS.md` for implementation details (E2E test architecture, port override mechanism).
 

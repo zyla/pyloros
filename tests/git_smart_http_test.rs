@@ -11,7 +11,11 @@ use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::{Request, Response};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
+
+/// Shared log of "METHOD path?query" strings recorded by the upstream handler.
+type RequestLog = Arc<Mutex<Vec<String>>>;
 
 /// Locate the `git-http-backend` binary via `git --exec-path`.
 fn git_http_backend_path() -> PathBuf {
@@ -71,14 +75,28 @@ fn parse_cgi_response(output: &[u8]) -> (u16, Vec<(String, String)>, Vec<u8>) {
 }
 
 /// Create an upstream handler that delegates to `git http-backend` CGI.
-fn git_cgi_handler(backend_path: PathBuf, git_root: PathBuf) -> common::UpstreamHandler {
-    std::sync::Arc::new(move |req: Request<Incoming>| {
+/// Records each request as "METHOD path?query" in the shared log.
+fn git_cgi_handler(
+    backend_path: PathBuf,
+    git_root: PathBuf,
+    request_log: RequestLog,
+) -> common::UpstreamHandler {
+    Arc::new(move |req: Request<Incoming>| {
         let backend_path = backend_path.clone();
         let git_root = git_root.clone();
+        let request_log = request_log.clone();
         Box::pin(async move {
             let method = req.method().to_string();
             let path = req.uri().path().to_string();
             let query = req.uri().query().unwrap_or("").to_string();
+
+            // Record request for later verification
+            let entry = if query.is_empty() {
+                format!("{} {}", method, path)
+            } else {
+                format!("{} {}?{}", method, path, query)
+            };
+            request_log.lock().unwrap().push(entry);
             let content_type = req
                 .headers()
                 .get("content-type")
@@ -199,10 +217,12 @@ async fn test_git_clone_through_proxy() {
     let repos_dir = create_test_repo(tmp.path());
     t.setup(format!("Created test git repo at {:?}", repos_dir));
 
+    let request_log: RequestLog = Arc::new(Mutex::new(Vec::new()));
+
     let upstream = TestUpstream::start_reported(
         &t,
         &ca,
-        git_cgi_handler(backend_path, repos_dir),
+        git_cgi_handler(backend_path, repos_dir, request_log.clone()),
         "git http-backend CGI",
     )
     .await;
@@ -242,6 +262,20 @@ async fn test_git_clone_through_proxy() {
     let readme_content = std::fs::read_to_string(clone_dir.join("README.md")).unwrap();
     t.assert_contains("README content", &readme_content, "Hello from git test!");
 
+    // Verify the proxy forwarded the expected git smart HTTP requests
+    let logged = request_log.lock().unwrap();
+    let saw_discovery = logged
+        .iter()
+        .any(|r| r.contains("info/refs") && r.contains("git-upload-pack"));
+    let saw_pack = logged
+        .iter()
+        .any(|r| r.contains("POST") && r.contains("git-upload-pack"));
+    t.assert_true(
+        "proxy forwarded git-upload-pack discovery request",
+        saw_discovery,
+    );
+    t.assert_true("proxy forwarded git-upload-pack POST request", saw_pack);
+
     proxy.shutdown();
     upstream.shutdown();
 }
@@ -276,10 +310,12 @@ async fn test_git_push_through_proxy() {
     run_git(&["config", "http.receivepack", "true"], &bare_repo);
     t.setup("Enabled http.receivepack on bare repo");
 
+    let request_log: RequestLog = Arc::new(Mutex::new(Vec::new()));
+
     let upstream = TestUpstream::start_reported(
         &t,
         &ca,
-        git_cgi_handler(backend_path, repos_dir),
+        git_cgi_handler(backend_path, repos_dir, request_log.clone()),
         "git http-backend CGI",
     )
     .await;
@@ -336,6 +372,23 @@ async fn test_git_push_through_proxy() {
         .unwrap();
     let content = String::from_utf8_lossy(&verify.stdout);
     t.assert_contains("bare repo has pushed file", &content, "pushed content");
+
+    // Verify the proxy forwarded the expected git smart HTTP requests
+    let logged = request_log.lock().unwrap();
+    let saw_receive_discovery = logged
+        .iter()
+        .any(|r| r.contains("info/refs") && r.contains("git-receive-pack"));
+    let saw_receive_pack = logged
+        .iter()
+        .any(|r| r.contains("POST") && r.contains("git-receive-pack"));
+    t.assert_true(
+        "proxy forwarded git-receive-pack discovery request",
+        saw_receive_discovery,
+    );
+    t.assert_true(
+        "proxy forwarded git-receive-pack POST request",
+        saw_receive_pack,
+    );
 
     proxy.shutdown();
     upstream.shutdown();
