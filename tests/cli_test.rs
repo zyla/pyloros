@@ -2,20 +2,16 @@
 
 mod common;
 
-use assert_cmd::cargo::cargo_bin_cmd;
-use assert_cmd::Command;
 use common::TestReport;
 use std::fs;
 use tempfile::TempDir;
 
-fn cmd() -> Command {
-    cargo_bin_cmd!()
-}
-
 /// Run a CLI command and report it.
 fn run_cli_reported(t: &TestReport, args: &[&str]) -> std::process::Output {
-    t.action(format!("Run `redlimitador {}`", args.join(" ")));
-    cmd().args(args).output().unwrap()
+    let bin = assert_cmd::cargo::cargo_bin!("redlimitador");
+    let mut cmd = std::process::Command::new(bin);
+    cmd.args(args);
+    common::run_command_reported(t, &mut cmd)
 }
 
 // ---------- validate-config ----------

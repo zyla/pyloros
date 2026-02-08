@@ -175,26 +175,26 @@ fn parse_listening_port(line: &str) -> Option<u16> {
     addr_str[colon + 1..].parse().ok()
 }
 
-/// Run curl through the proxy via HTTPS_PROXY env var. Returns (status_code, body, stderr).
-fn curl_get(proxy_port: u16, url: &str, ca_cert_path: &str) -> (u16, String, String) {
+/// Build a curl command configured to go through the proxy.
+fn build_curl_command(proxy_port: u16, url: &str, ca_cert_path: &str) -> Command {
     let proxy_url = format!("http://127.0.0.1:{}", proxy_port);
+    let mut cmd = Command::new("curl");
+    cmd.env("HTTPS_PROXY", &proxy_url).args([
+        "-s",
+        "-S",
+        "--cacert",
+        ca_cert_path,
+        "-w",
+        "\n%{http_code}",
+        "--max-time",
+        "10",
+        url,
+    ]);
+    cmd
+}
 
-    let output = Command::new("curl")
-        .env("HTTPS_PROXY", &proxy_url)
-        .args([
-            "-s",
-            "-S",
-            "--cacert",
-            ca_cert_path,
-            "-w",
-            "\n%{http_code}",
-            "--max-time",
-            "10",
-            url,
-        ])
-        .output()
-        .expect("failed to run curl");
-
+/// Parse curl output (with `-w "\n%{http_code}"`) into (status_code, body, stderr).
+fn parse_curl_output(output: &std::process::Output) -> (u16, String, String) {
     let full_output = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
@@ -212,17 +212,6 @@ fn curl_get(proxy_port: u16, url: &str, ca_cert_path: &str) -> (u16, String, Str
     });
 
     (status, body.to_string(), stderr)
-}
-
-/// Run curl through the proxy with reporting.
-fn curl_get_reported(
-    t: &TestReport,
-    proxy_port: u16,
-    url: &str,
-    ca_cert_path: &str,
-) -> (u16, String, String) {
-    t.action(format!("curl GET {}", url));
-    curl_get(proxy_port, url, ca_cert_path)
 }
 
 // ---------------------------------------------------------------------------
@@ -256,8 +245,11 @@ async fn test_binary_allowed_get_returns_200() {
 
     let (mut child, proxy_port) = spawn_proxy_reported(&t, &config_path);
 
-    let (status, body, _stderr) =
-        curl_get_reported(&t, proxy_port, "https://localhost/test", &ca.cert_path);
+    let output = common::run_command_reported(
+        &t,
+        &mut build_curl_command(proxy_port, "https://localhost/test", &ca.cert_path),
+    );
+    let (status, body, _stderr) = parse_curl_output(&output);
 
     t.assert_eq("Response status", &status, &200u16);
     t.assert_eq("Response body", &body.as_str(), &"hello binary");
@@ -295,8 +287,11 @@ async fn test_binary_blocked_request_returns_451() {
 
     let (mut child, proxy_port) = spawn_proxy_reported(&t, &config_path);
 
-    let (status, _body, _stderr) =
-        curl_get_reported(&t, proxy_port, "https://localhost/test", &ca.cert_path);
+    let output = common::run_command_reported(
+        &t,
+        &mut build_curl_command(proxy_port, "https://localhost/test", &ca.cert_path),
+    );
+    let (status, _body, _stderr) = parse_curl_output(&output);
 
     t.assert_eq("Response status", &status, &451u16);
 
@@ -501,15 +496,10 @@ fn test_binary_generate_ca() {
 
     let tmp = TempDir::new().unwrap();
 
-    t.action(format!(
-        "Run `redlimitador generate-ca --out {}`",
-        tmp.path().display()
-    ));
     let bin = assert_cmd::cargo::cargo_bin!("redlimitador");
-    let output = Command::new(bin)
-        .args(["generate-ca", "--out", tmp.path().to_str().unwrap()])
-        .output()
-        .expect("failed to run generate-ca");
+    let mut cmd = Command::new(bin);
+    cmd.args(["generate-ca", "--out", tmp.path().to_str().unwrap()]);
+    let output = common::run_command_reported(&t, &mut cmd);
 
     t.assert_true("generate-ca exits successfully", output.status.success());
 

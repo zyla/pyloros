@@ -724,6 +724,35 @@ impl LogCapture {
 }
 
 // ---------------------------------------------------------------------------
+// run_command_reported — generic reported subprocess invocation
+// ---------------------------------------------------------------------------
+
+/// Run a subprocess and report it as a test action.
+/// The action description is auto-generated from the command program name and arguments.
+pub fn run_command_reported(
+    t: &TestReport,
+    cmd: &mut std::process::Command,
+) -> std::process::Output {
+    let program = std::path::Path::new(cmd.get_program())
+        .file_name()
+        .unwrap_or(cmd.get_program().as_ref())
+        .to_string_lossy()
+        .into_owned();
+    let args: Vec<_> = cmd
+        .get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let desc = if args.is_empty() {
+        format!("Run `{}`", program)
+    } else {
+        format!("Run `{} {}`", program, args.join(" "))
+    };
+    t.action(desc);
+    cmd.output()
+        .unwrap_or_else(|e| panic!("failed to run {}: {}", program, e))
+}
+
+// ---------------------------------------------------------------------------
 // Rule helpers
 // ---------------------------------------------------------------------------
 
