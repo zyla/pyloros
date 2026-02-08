@@ -74,7 +74,7 @@ git worktree add ../redlimitador-worktrees/<feature-slug> claude/<feature-slug>
 
 **During development**: use absolute paths for all commands since shell state resets between Bash calls. Follow the same dev process (tests, commits).
 
-**Finishing**: default to `gh pr create`. For trivial changes where a PR would be overkill, merge locally. Ask the user if unclear.
+**Finishing**: default to `gh pr create`. For trivial changes where a PR would be overkill, merge locally with `--no-ff` for clearer history. Ask the user if unclear.
 
 **Cleanup** (after merge/PR):
 
