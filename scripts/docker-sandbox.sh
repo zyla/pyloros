@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # docker-sandbox.sh — Run a Docker container with all network access
-# routed exclusively through the redlimitador proxy.
+# routed exclusively through the pyloros proxy.
 #
 # Usage: scripts/docker-sandbox.sh [OPTIONS] IMAGE [COMMAND...]
 #
@@ -25,14 +25,14 @@ usage() {
 Usage: docker-sandbox.sh [OPTIONS] IMAGE [COMMAND...]
 
 Run a Docker container with all network access routed through the
-redlimitador proxy. The sandbox container has no direct internet access;
+pyloros proxy. The sandbox container has no direct internet access;
 all traffic must go through the proxy's allowlist rules.
 
 Options:
   --config FILE    Proxy config file with rules (required)
   --image IMAGE    Docker image to use for the proxy
-                   (default: ghcr.io/zyla/redlimitador:latest)
-  --binary PATH    Path to redlimitador binary (builds a local Docker
+                   (default: ghcr.io/zyla/pyloros:latest)
+  --binary PATH    Path to pyloros binary (builds a local Docker
                    image from the binary using the project Dockerfile)
   --ca-dir DIR     Use existing CA certs from this directory (default: auto-generate)
   --keep           Don't clean up containers/networks on exit (for debugging)
@@ -51,7 +51,7 @@ Examples:
   scripts/docker-sandbox.sh --config config.toml alpine:latest sh
 
   # Use a local binary (builds a temporary Docker image)
-  scripts/docker-sandbox.sh --config config.toml --binary target/release/redlimitador alpine:latest sh
+  scripts/docker-sandbox.sh --config config.toml --binary target/release/pyloros alpine:latest sh
 
   # Use a specific image
   scripts/docker-sandbox.sh --config config.toml --image my-proxy:dev alpine:latest sh
@@ -134,13 +134,13 @@ if [[ -n "$BINARY" ]]; then
     BINARY="$(cd "$(dirname "$BINARY")" && pwd)/$(basename "$BINARY")"
     PROXY_IMAGE="rl-sandbox-proxy-$$"
     log "Building local proxy image from $BINARY..."
-    cp "$BINARY" "$PROJECT_DIR/redlimitador"
+    cp "$BINARY" "$PROJECT_DIR/pyloros"
     docker build -t "$PROXY_IMAGE" -f "$PROJECT_DIR/Dockerfile" "$PROJECT_DIR" >/dev/null
-    rm -f "$PROJECT_DIR/redlimitador"
+    rm -f "$PROJECT_DIR/pyloros"
     BUILT_LOCAL_IMAGE=true
 elif [[ -z "$PROXY_IMAGE" ]]; then
     # Default to published image
-    PROXY_IMAGE="ghcr.io/zyla/redlimitador:latest"
+    PROXY_IMAGE="ghcr.io/zyla/pyloros:latest"
 fi
 
 # CA cert handling — when using --binary, the binary can generate certs directly
@@ -199,14 +199,14 @@ log "Starting proxy container..."
 docker run -d \
     --name "$CTR_PROXY" \
     --network "$NET_EXTERNAL" \
-    -v "$CONFIG:/etc/redlimitador/config.toml:ro" \
-    -v "$CA_DIR/ca.crt:/etc/redlimitador/ca.crt:ro" \
-    -v "$CA_DIR/ca.key:/etc/redlimitador/ca.key:ro" \
+    -v "$CONFIG:/etc/pyloros/config.toml:ro" \
+    -v "$CA_DIR/ca.crt:/etc/pyloros/ca.crt:ro" \
+    -v "$CA_DIR/ca.key:/etc/pyloros/ca.key:ro" \
     "$PROXY_IMAGE" \
     run \
-        --config /etc/redlimitador/config.toml \
-        --ca-cert /etc/redlimitador/ca.crt \
-        --ca-key /etc/redlimitador/ca.key \
+        --config /etc/pyloros/config.toml \
+        --ca-cert /etc/pyloros/ca.crt \
+        --ca-key /etc/pyloros/ca.key \
         --bind "0.0.0.0:${PROXY_PORT}" \
     >/dev/null
 
@@ -247,12 +247,12 @@ SANDBOX_ARGS=(
     -e "http_proxy=http://${CTR_PROXY}:${PROXY_PORT}"
     -e "https_proxy=http://${CTR_PROXY}:${PROXY_PORT}"
     -e "no_proxy="
-    -e "SSL_CERT_FILE=/etc/redlimitador/ca.crt"
-    -e "CURL_CA_BUNDLE=/etc/redlimitador/ca.crt"
-    -e "NODE_EXTRA_CA_CERTS=/etc/redlimitador/ca.crt"
-    -e "GIT_SSL_CAINFO=/etc/redlimitador/ca.crt"
-    -e "REQUESTS_CA_BUNDLE=/etc/redlimitador/ca.crt"
-    -v "$CA_DIR/ca.crt:/etc/redlimitador/ca.crt:ro"
+    -e "SSL_CERT_FILE=/etc/pyloros/ca.crt"
+    -e "CURL_CA_BUNDLE=/etc/pyloros/ca.crt"
+    -e "NODE_EXTRA_CA_CERTS=/etc/pyloros/ca.crt"
+    -e "GIT_SSL_CAINFO=/etc/pyloros/ca.crt"
+    -e "REQUESTS_CA_BUNDLE=/etc/pyloros/ca.crt"
+    -v "$CA_DIR/ca.crt:/etc/pyloros/ca.crt:ro"
 )
 
 # Add interactive flags if no command specified and stdin is a terminal

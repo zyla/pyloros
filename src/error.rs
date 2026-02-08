@@ -1,4 +1,4 @@
-//! Error types for redlimitador
+//! Error types for pyloros
 
 use std::io;
 

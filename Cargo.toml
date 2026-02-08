@@ -1,5 +1,5 @@
 [package]
-name = "redlimitador"
+name = "pyloros"
 version = "0.1.0"
 edition = "2021"
 description = "A filtering HTTPS proxy for agent network access control"

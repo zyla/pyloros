@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use redlimitador::filter::matcher::PatternMatcher;
+use pyloros::filter::matcher::PatternMatcher;
 
 fuzz_target!(|data: &[u8]| {
     // Split input into pattern and text at the first null byte

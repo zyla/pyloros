@@ -1,5 +1,5 @@
 # Docker Compose example: run containers with network access routed through
-# the redlimitador proxy.
+# the pyloros proxy.
 #
 # Architecture (same as scripts/docker-sandbox.sh):
 #
@@ -11,7 +11,7 @@
 # through the proxy's allowlist rules.
 #
 # Prerequisites:
-#   1. Generate a CA:  redlimitador generate-ca --out ./certs/
+#   1. Generate a CA:  pyloros generate-ca --out ./certs/
 #      (or: cargo run -- generate-ca --out ./certs/)
 #
 # Usage:
@@ -33,19 +33,19 @@
 
 services:
   proxy:
-    image: ${PROXY_IMAGE:-ghcr.io/zyla/redlimitador:latest}
+    image: ${PROXY_IMAGE:-ghcr.io/zyla/pyloros:latest}
     volumes:
-      - ./config.toml:/etc/redlimitador/config.toml:ro
-      - ${CA_DIR:?Set CA_DIR to absolute path of CA certificate directory}/ca.crt:/etc/redlimitador/ca.crt:ro
-      - ${CA_DIR:?Set CA_DIR to absolute path of CA certificate directory}/ca.key:/etc/redlimitador/ca.key:ro
+      - ./config.toml:/etc/pyloros/config.toml:ro
+      - ${CA_DIR:?Set CA_DIR to absolute path of CA certificate directory}/ca.crt:/etc/pyloros/ca.crt:ro
+      - ${CA_DIR:?Set CA_DIR to absolute path of CA certificate directory}/ca.key:/etc/pyloros/ca.key:ro
     command:
       - run
       - --config
-      - /etc/redlimitador/config.toml
+      - /etc/pyloros/config.toml
       - --ca-cert
-      - /etc/redlimitador/ca.crt
+      - /etc/pyloros/ca.crt
       - --ca-key
-      - /etc/redlimitador/ca.key
+      - /etc/pyloros/ca.key
       - --bind
       - "0.0.0.0:8080"
     networks:
@@ -70,13 +70,13 @@ services:
       - http_proxy=http://proxy:8080
       - https_proxy=http://proxy:8080
       - no_proxy=
-      - SSL_CERT_FILE=/etc/redlimitador/ca.crt
-      - CURL_CA_BUNDLE=/etc/redlimitador/ca.crt
-      - NODE_EXTRA_CA_CERTS=/etc/redlimitador/ca.crt
-      - GIT_SSL_CAINFO=/etc/redlimitador/ca.crt
-      - REQUESTS_CA_BUNDLE=/etc/redlimitador/ca.crt
+      - SSL_CERT_FILE=/etc/pyloros/ca.crt
+      - CURL_CA_BUNDLE=/etc/pyloros/ca.crt
+      - NODE_EXTRA_CA_CERTS=/etc/pyloros/ca.crt
+      - GIT_SSL_CAINFO=/etc/pyloros/ca.crt
+      - REQUESTS_CA_BUNDLE=/etc/pyloros/ca.crt
     volumes:
-      - ${CA_DIR:?Set CA_DIR to absolute path of CA certificate directory}/ca.crt:/etc/redlimitador/ca.crt:ro
+      - ${CA_DIR:?Set CA_DIR to absolute path of CA certificate directory}/ca.crt:/etc/pyloros/ca.crt:ro
     networks:
       - internal
 

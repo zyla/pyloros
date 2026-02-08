@@ -10,8 +10,8 @@ use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
-use redlimitador::tls::{CertificateAuthority, GeneratedCa};
-use redlimitador::{Config, ProxyServer};
+use pyloros::tls::{CertificateAuthority, GeneratedCa};
+use pyloros::{Config, ProxyServer};
 use rustls::pki_types::CertificateDer;
 use rustls::{ClientConfig, ServerConfig};
 use std::collections::HashMap;
@@ -621,19 +621,15 @@ pub struct TestProxy {
 
 impl TestProxy {
     /// Start a proxy configured with the given CA, rules, and upstream override.
-    pub async fn start(
-        ca: &TestCa,
-        rules: Vec<redlimitador::config::Rule>,
-        upstream_port: u16,
-    ) -> Self {
+    pub async fn start(ca: &TestCa, rules: Vec<pyloros::config::Rule>, upstream_port: u16) -> Self {
         Self::start_inner(ca, rules, Vec::new(), upstream_port).await
     }
 
     /// Start a proxy with credential injection.
     pub async fn start_with_credentials(
         ca: &TestCa,
-        rules: Vec<redlimitador::config::Rule>,
-        credentials: Vec<redlimitador::config::Credential>,
+        rules: Vec<pyloros::config::Rule>,
+        credentials: Vec<pyloros::config::Credential>,
         upstream_port: u16,
     ) -> Self {
         Self::start_inner(ca, rules, credentials, upstream_port).await
@@ -643,7 +639,7 @@ impl TestProxy {
     pub async fn start_reported(
         report: &TestReport,
         ca: &TestCa,
-        rules: Vec<redlimitador::config::Rule>,
+        rules: Vec<pyloros::config::Rule>,
         upstream_port: u16,
     ) -> Self {
         let desc = rules
@@ -675,7 +671,7 @@ impl TestProxy {
     pub async fn start_with_host_override_reported(
         report: &TestReport,
         ca: &TestCa,
-        rules: Vec<redlimitador::config::Rule>,
+        rules: Vec<pyloros::config::Rule>,
         upstream_port: u16,
         upstream_host: &str,
     ) -> Self {
@@ -706,8 +702,8 @@ impl TestProxy {
 
     async fn start_inner(
         ca: &TestCa,
-        rules: Vec<redlimitador::config::Rule>,
-        credentials: Vec<redlimitador::config::Credential>,
+        rules: Vec<pyloros::config::Rule>,
+        credentials: Vec<pyloros::config::Credential>,
         upstream_port: u16,
     ) -> Self {
         Self::start_inner_with_host(ca, rules, credentials, upstream_port, None).await
@@ -715,8 +711,8 @@ impl TestProxy {
 
     async fn start_inner_with_host(
         ca: &TestCa,
-        rules: Vec<redlimitador::config::Rule>,
-        credentials: Vec<redlimitador::config::Credential>,
+        rules: Vec<pyloros::config::Rule>,
+        credentials: Vec<pyloros::config::Credential>,
         upstream_port: u16,
         upstream_host: Option<String>,
     ) -> Self {
@@ -909,8 +905,8 @@ pub fn run_command_reported(
 // Rule helpers
 // ---------------------------------------------------------------------------
 
-pub fn rule(method: &str, url: &str) -> redlimitador::config::Rule {
-    redlimitador::config::Rule {
+pub fn rule(method: &str, url: &str) -> pyloros::config::Rule {
+    pyloros::config::Rule {
         method: Some(method.to_string()),
         url: url.to_string(),
         websocket: false,
@@ -919,8 +915,8 @@ pub fn rule(method: &str, url: &str) -> redlimitador::config::Rule {
     }
 }
 
-pub fn ws_rule(url: &str) -> redlimitador::config::Rule {
-    redlimitador::config::Rule {
+pub fn ws_rule(url: &str) -> pyloros::config::Rule {
+    pyloros::config::Rule {
         method: Some("GET".to_string()),
         url: url.to_string(),
         websocket: true,
@@ -929,8 +925,8 @@ pub fn ws_rule(url: &str) -> redlimitador::config::Rule {
     }
 }
 
-pub fn git_rule(git_op: &str, url: &str) -> redlimitador::config::Rule {
-    redlimitador::config::Rule {
+pub fn git_rule(git_op: &str, url: &str) -> pyloros::config::Rule {
+    pyloros::config::Rule {
         method: None,
         url: url.to_string(),
         websocket: false,
@@ -939,12 +935,8 @@ pub fn git_rule(git_op: &str, url: &str) -> redlimitador::config::Rule {
     }
 }
 
-pub fn git_rule_with_branches(
-    git_op: &str,
-    url: &str,
-    branches: &[&str],
-) -> redlimitador::config::Rule {
-    redlimitador::config::Rule {
+pub fn git_rule_with_branches(git_op: &str, url: &str, branches: &[&str]) -> pyloros::config::Rule {
+    pyloros::config::Rule {
         method: None,
         url: url.to_string(),
         websocket: false,

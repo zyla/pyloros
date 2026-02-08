@@ -54,14 +54,14 @@ jobs:
 
       - name: Verify static linking
         run: |
-          file target/${{ env.TARGET }}/release/redlimitador
-          file target/${{ env.TARGET }}/release/redlimitador | grep -qE "static(ally|-pie) linked"
+          file target/${{ env.TARGET }}/release/pyloros
+          file target/${{ env.TARGET }}/release/pyloros | grep -qE "static(ally|-pie) linked"
 
       - name: Package tarball
         run: |
-          ARCHIVE="redlimitador-${GITHUB_REF_NAME}-x86_64-unknown-linux-musl"
+          ARCHIVE="pyloros-${GITHUB_REF_NAME}-x86_64-unknown-linux-musl"
           mkdir "$ARCHIVE"
-          cp target/${{ env.TARGET }}/release/redlimitador "$ARCHIVE/"
+          cp target/${{ env.TARGET }}/release/pyloros "$ARCHIVE/"
           cp README.md LICENSE examples/basic_config.toml "$ARCHIVE/"
           tar czf "${ARCHIVE}.tar.gz" "$ARCHIVE"
           sha256sum "${ARCHIVE}.tar.gz" > SHA256SUMS
@@ -83,7 +83,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Copy binary to build context
-        run: cp target/${{ env.TARGET }}/release/redlimitador .
+        run: cp target/${{ env.TARGET }}/release/pyloros .
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
@@ -91,8 +91,8 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/zyla/redlimitador:${{ github.ref_name }}
-            ghcr.io/zyla/redlimitador:latest
+            ghcr.io/zyla/pyloros:${{ github.ref_name }}
+            ghcr.io/zyla/pyloros:latest
 
   latest:
     name: Latest Build
@@ -124,14 +124,14 @@ jobs:
 
       - name: Verify static linking
         run: |
-          file target/${{ env.TARGET }}/release/redlimitador
-          file target/${{ env.TARGET }}/release/redlimitador | grep -qE "static(ally|-pie) linked"
+          file target/${{ env.TARGET }}/release/pyloros
+          file target/${{ env.TARGET }}/release/pyloros | grep -qE "static(ally|-pie) linked"
 
       - name: Package tarball
         run: |
-          ARCHIVE="redlimitador-latest-x86_64-unknown-linux-musl"
+          ARCHIVE="pyloros-latest-x86_64-unknown-linux-musl"
           mkdir "$ARCHIVE"
-          cp target/${{ env.TARGET }}/release/redlimitador "$ARCHIVE/"
+          cp target/${{ env.TARGET }}/release/pyloros "$ARCHIVE/"
           cp README.md LICENSE examples/basic_config.toml "$ARCHIVE/"
           tar czf "${ARCHIVE}.tar.gz" "$ARCHIVE"
           sha256sum "${ARCHIVE}.tar.gz" > SHA256SUMS
@@ -169,11 +169,11 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Copy binary to build context
-        run: cp target/${{ env.TARGET }}/release/redlimitador .
+        run: cp target/${{ env.TARGET }}/release/pyloros .
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: ghcr.io/zyla/redlimitador:edge
+          tags: ghcr.io/zyla/pyloros:edge

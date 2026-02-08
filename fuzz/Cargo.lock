@@ -823,7 +823,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "redlimitador"
+name = "pyloros"
 version = "0.1.0"
 dependencies = [
  "bytes",
@@ -847,11 +847,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "redlimitador-fuzz"
+name = "pyloros-fuzz"
 version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
- "redlimitador",
+ "pyloros",
 ]
 
 [[package]]

@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use redlimitador::Config;
+use pyloros::Config;
 
 fuzz_target!(|data: &[u8]| {
     let input = match std::str::from_utf8(data) {

@@ -3,8 +3,8 @@
 #[path = "common/mod.rs"]
 mod common;
 
-use redlimitador::config::Rule;
-use redlimitador::filter::{FilterEngine, RequestInfo};
+use pyloros::config::Rule;
+use pyloros::filter::{FilterEngine, RequestInfo};
 
 fn rule(method: &str, url: &str) -> Rule {
     Rule {

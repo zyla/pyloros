@@ -5,10 +5,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
-use redlimitador::{Config, GeneratedCa, ProxyServer};
+use pyloros::{Config, GeneratedCa, ProxyServer};
 
 #[derive(Parser)]
-#[command(name = "redlimitador")]
+#[command(name = "pyloros")]
 #[command(about = "A filtering HTTPS proxy for agent network access control")]
 #[command(version)]
 struct Cli {
@@ -117,7 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
                 eprintln!();
                 eprintln!("To generate a new CA certificate:");
-                eprintln!("  redlimitador generate-ca --out ./certs/");
+                eprintln!("  pyloros generate-ca --out ./certs/");
                 std::process::exit(1);
             }
 
@@ -184,14 +184,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!();
             println!("To use with the proxy:");
             println!(
-                "  redlimitador run --ca-cert {} --ca-key {}",
+                "  pyloros run --ca-cert {} --ca-key {}",
                 cert_path.display(),
                 key_path.display()
             );
             println!();
             println!("To trust the CA on Ubuntu/Debian:");
             println!(
-                "  sudo cp {} /usr/local/share/ca-certificates/redlimitador.crt",
+                "  sudo cp {} /usr/local/share/ca-certificates/pyloros.crt",
                 cert_path.display()
             );
             println!("  sudo update-ca-certificates");
@@ -251,14 +251,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             // Try to compile rules
-            let engine = redlimitador::FilterEngine::new(cfg.rules)?;
+            let engine = pyloros::FilterEngine::new(cfg.rules)?;
             println!();
             println!("All {} rules compiled successfully.", engine.rule_count());
 
             // Validate and display credentials
             println!("  Credentials: {}", cfg.credentials.len());
             if !cfg.credentials.is_empty() {
-                let cred_engine = redlimitador::CredentialEngine::new(cfg.credentials)?;
+                let cred_engine = pyloros::CredentialEngine::new(cfg.credentials)?;
                 println!();
                 println!("Credentials:");
                 for (i, desc) in cred_engine.credential_descriptions().iter().enumerate() {

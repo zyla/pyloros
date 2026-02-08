@@ -8,7 +8,7 @@
 bind_address = "127.0.0.1:8080"
 
 # Path to CA certificate for MITM (required)
-# Generate with: redlimitador generate-ca --out ./certs/
+# Generate with: pyloros generate-ca --out ./certs/
 ca_cert = "./certs/ca.crt"
 ca_key = "./certs/ca.key"
 

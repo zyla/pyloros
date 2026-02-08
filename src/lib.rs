@@ -13,7 +13,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use redlimitador::{Config, ProxyServer};
+//! use pyloros::{Config, ProxyServer};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {

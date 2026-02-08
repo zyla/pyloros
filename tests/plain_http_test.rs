@@ -67,7 +67,7 @@ async fn test_http_blocked_request_returns_451() {
             .unwrap()
             .to_str()
             .unwrap(),
-        &"redlimitador",
+        &"pyloros",
     );
 
     proxy.shutdown();

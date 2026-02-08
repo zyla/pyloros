@@ -3,7 +3,7 @@
 mod common;
 
 use common::{echo_handler, rule, ReportingClient, TestCa, TestProxy, TestUpstream};
-use redlimitador::config::Credential;
+use pyloros::config::Credential;
 
 fn cred(url: &str, header: &str, value: &str) -> Credential {
     Credential::Header {

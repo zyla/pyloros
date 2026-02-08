@@ -14,27 +14,27 @@ Blocked requests receive HTTP 451 (Unavailable For Legal Reasons).
 
 ### Pre-built binary (Linux x86_64)
 
-Download the latest statically-linked binary from [GitHub Releases](https://github.com/zyla/redlimitador/releases/latest):
+Download the latest statically-linked binary from [GitHub Releases](https://github.com/zyla/pyloros/releases/latest):
 
 ```bash
-curl -sL https://github.com/zyla/redlimitador/releases/latest/download/redlimitador-$(curl -sL https://api.github.com/repos/zyla/redlimitador/releases/latest | grep tag_name | cut -d '"' -f4)-x86_64-unknown-linux-musl.tar.gz | tar xz
-sudo mv redlimitador-*/redlimitador /usr/local/bin/
+curl -sL https://github.com/zyla/pyloros/releases/latest/download/pyloros-$(curl -sL https://api.github.com/repos/zyla/pyloros/releases/latest | grep tag_name | cut -d '"' -f4)-x86_64-unknown-linux-musl.tar.gz | tar xz
+sudo mv pyloros-*/pyloros /usr/local/bin/
 ```
 
 Or download a specific version:
 
 ```bash
 VERSION=v0.1.0
-curl -sL https://github.com/zyla/redlimitador/releases/download/${VERSION}/redlimitador-${VERSION}-x86_64-unknown-linux-musl.tar.gz | tar xz
-sudo mv redlimitador-${VERSION}-x86_64-unknown-linux-musl/redlimitador /usr/local/bin/
+curl -sL https://github.com/zyla/pyloros/releases/download/${VERSION}/pyloros-${VERSION}-x86_64-unknown-linux-musl.tar.gz | tar xz
+sudo mv pyloros-${VERSION}-x86_64-unknown-linux-musl/pyloros /usr/local/bin/
 ```
 
 ### Docker image
 
-A Docker image is published to `ghcr.io/zyla/redlimitador`:
+A Docker image is published to `ghcr.io/zyla/pyloros`:
 
 ```bash
-docker pull ghcr.io/zyla/redlimitador:latest
+docker pull ghcr.io/zyla/pyloros:latest
 ```
 
 Available tags:
@@ -46,11 +46,11 @@ Run directly:
 
 ```bash
 docker run --rm \
-  -v ./config.toml:/etc/redlimitador/config.toml:ro \
+  -v ./config.toml:/etc/pyloros/config.toml:ro \
   -v ./certs:/certs:ro \
   -p 8080:8080 \
-  ghcr.io/zyla/redlimitador:latest \
-  run --config /etc/redlimitador/config.toml \
+  ghcr.io/zyla/pyloros:latest \
+  run --config /etc/pyloros/config.toml \
       --ca-cert /certs/ca.crt --ca-key /certs/ca.key \
       --bind 0.0.0.0:8080
 ```
@@ -60,8 +60,8 @@ docker run --rm \
 A rolling pre-release is built from `main` on every push:
 
 ```bash
-curl -sL https://github.com/zyla/redlimitador/releases/download/latest/redlimitador-latest-x86_64-unknown-linux-musl.tar.gz | tar xz
-sudo mv redlimitador-latest-x86_64-unknown-linux-musl/redlimitador /usr/local/bin/
+curl -sL https://github.com/zyla/pyloros/releases/download/latest/pyloros-latest-x86_64-unknown-linux-musl.tar.gz | tar xz
+sudo mv pyloros-latest-x86_64-unknown-linux-musl/pyloros /usr/local/bin/
 ```
 
 ### Building from source
@@ -69,19 +69,19 @@ sudo mv redlimitador-latest-x86_64-unknown-linux-musl/redlimitador /usr/local/bi
 Prerequisites: [Rust](https://www.rust-lang.org/tools/install) (stable toolchain).
 
 ```bash
-git clone https://github.com/zyla/redlimitador.git
-cd redlimitador
+git clone https://github.com/zyla/pyloros.git
+cd pyloros
 cargo build --release
 ```
 
-The compiled binary is at `target/release/redlimitador`.
+The compiled binary is at `target/release/pyloros`.
 
 ## Quick Start
 
 ### 1. Generate a CA certificate
 
 ```bash
-redlimitador generate-ca --out ./certs/
+pyloros generate-ca --out ./certs/
 ```
 
 This creates `certs/ca.crt` and `certs/ca.key`.
@@ -91,7 +91,7 @@ This creates `certs/ca.crt` and `certs/ca.key`.
 On Ubuntu/Debian:
 
 ```bash
-sudo cp certs/ca.crt /usr/local/share/ca-certificates/redlimitador.crt
+sudo cp certs/ca.crt /usr/local/share/ca-certificates/pyloros.crt
 sudo update-ca-certificates
 ```
 
@@ -123,7 +123,7 @@ See [`examples/basic_config.toml`](examples/basic_config.toml) for a more comple
 ### 4. Start the proxy
 
 ```bash
-redlimitador run --config config.toml
+pyloros run --config config.toml
 ```
 
 ### 5. Configure the client
@@ -188,7 +188,7 @@ Node.js does **not** use the system CA store, so `NODE_EXTRA_CA_CERTS` is requir
 
 ## Docker Sandbox
 
-The `scripts/docker-sandbox.sh` script runs a Docker container with **all** network access routed exclusively through the redlimitador proxy. The sandbox container has no direct internet access — all traffic must pass through the proxy's allowlist rules.
+The `scripts/docker-sandbox.sh` script runs a Docker container with **all** network access routed exclusively through the pyloros proxy. The sandbox container has no direct internet access — all traffic must pass through the proxy's allowlist rules.
 
 ### Quick Start
 
@@ -211,14 +211,14 @@ The script creates two Docker networks:
 Internet ←── Proxy (external + internal networks) ←── Sandbox (internal only)
 ```
 
-The proxy container runs redlimitador with your config. The sandbox container gets `HTTP_PROXY`/`HTTPS_PROXY` environment variables pointing to the proxy, plus the CA certificate mounted and configured via `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, `GIT_SSL_CAINFO`, and `REQUESTS_CA_BUNDLE`.
+The proxy container runs pyloros with your config. The sandbox container gets `HTTP_PROXY`/`HTTPS_PROXY` environment variables pointing to the proxy, plus the CA certificate mounted and configured via `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, `GIT_SSL_CAINFO`, and `REQUESTS_CA_BUNDLE`.
 
 ### Options
 
 | Flag | Description |
 |------|-------------|
 | `--config FILE` | Proxy config file with rules (required) |
-| `--image IMAGE` | Docker image for the proxy (default: `ghcr.io/zyla/redlimitador:latest`) |
+| `--image IMAGE` | Docker image for the proxy (default: `ghcr.io/zyla/pyloros:latest`) |
 | `--binary PATH` | Path to local binary (builds a temporary Docker image) |
 | `--ca-dir DIR` | Use existing CA certs (default: auto-generate to temp dir) |
 | `--keep` | Don't clean up on exit (for debugging) |
@@ -297,7 +297,7 @@ websocket = true
 ### `run` — Start the proxy server
 
 ```
-redlimitador run [OPTIONS]
+pyloros run [OPTIONS]
 ```
 
 | Flag | Description |
@@ -311,7 +311,7 @@ redlimitador run [OPTIONS]
 ### `generate-ca` — Generate a CA certificate and key
 
 ```
-redlimitador generate-ca [OPTIONS]
+pyloros generate-ca [OPTIONS]
 ```
 
 | Flag | Description |
@@ -323,7 +323,7 @@ redlimitador generate-ca [OPTIONS]
 ### `validate-config` — Validate a configuration file
 
 ```
-redlimitador validate-config --config <PATH>
+pyloros validate-config --config <PATH>
 ```
 
 | Flag | Description |

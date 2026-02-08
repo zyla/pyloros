@@ -182,11 +182,7 @@ async fn test_connect_non_443_port_blocked() {
     let response = String::from_utf8_lossy(&buf[..n]).to_string();
 
     t.assert_starts_with("Response starts with 451", &response, "HTTP/1.1 451");
-    t.assert_contains(
-        "X-Blocked-By header",
-        &response,
-        "X-Blocked-By: redlimitador",
-    );
+    t.assert_contains("X-Blocked-By header", &response, "X-Blocked-By: pyloros");
     t.assert_contains(
         "Blocking reason in body",
         &response,

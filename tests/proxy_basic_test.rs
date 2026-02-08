@@ -76,7 +76,7 @@ async fn test_blocked_request_returns_451() {
         .to_string();
 
     t.assert_eq("Response status", &status, &451u16);
-    t.assert_eq("X-Blocked-By header", &blocked_by.as_str(), &"redlimitador");
+    t.assert_eq("X-Blocked-By header", &blocked_by.as_str(), &"pyloros");
 
     proxy.shutdown();
     upstream.shutdown();
