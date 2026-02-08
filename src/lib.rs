@@ -19,7 +19,8 @@
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let config = Config::from_file("config.toml")?;
 //!     let server = ProxyServer::new(config)?;
-//!     server.run().await?;
+//!     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+//!     server.run_until_shutdown(shutdown_rx).await?;
 //!     Ok(())
 //! }
 //! ```

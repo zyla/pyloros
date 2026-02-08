@@ -89,144 +89,14 @@ impl ProxyServer {
         self
     }
 
-    /// Run the proxy server
-    pub async fn run(&self) -> Result<()> {
-        let addr: SocketAddr = self.config.proxy.bind_address.parse().map_err(|e| {
-            Error::config(format!(
-                "Invalid bind address '{}': {}",
-                self.config.proxy.bind_address, e
-            ))
-        })?;
-
-        let listener = TcpListener::bind(addr)
-            .await
-            .map_err(|e| Error::proxy(format!("Failed to bind to {}: {}", addr, e)))?;
-
-        let local_addr = listener
-            .local_addr()
-            .map_err(|e| Error::proxy(format!("Failed to get local address: {}", e)))?;
-        tracing::info!(address = %local_addr, "Proxy server listening");
-
-        let tunnel_handler = Arc::new(self.make_tunnel_handler());
-
-        loop {
-            let (stream, client_addr) = match listener.accept().await {
-                Ok(conn) => conn,
-                Err(e) => {
-                    tracing::error!(error = %e, "Failed to accept connection");
-                    continue;
-                }
-            };
-
-            tracing::debug!(client = %client_addr, "New connection");
-
-            let tunnel_handler = tunnel_handler.clone();
-            let filter_engine = self.filter_engine.clone();
-            let log_allowed = self.config.logging.log_allowed_requests;
-            let log_blocked = self.config.logging.log_blocked_requests;
-
-            // Spawn handler for this connection
-            tokio::spawn(async move {
-                let io = TokioIo::new(stream);
-
-                let tunnel_handler = tunnel_handler.clone();
-                let filter_engine = filter_engine.clone();
-
-                let service = service_fn(move |req| {
-                    let handler = ProxyHandler::new(tunnel_handler.clone(), filter_engine.clone())
-                        .with_request_logging(log_allowed, log_blocked);
-                    async move { handler.handle(req).await }
-                });
-
-                if let Err(e) = http1::Builder::new()
-                    .preserve_header_case(true)
-                    .title_case_headers(true)
-                    .serve_connection(io, service)
-                    .with_upgrades()
-                    .await
-                {
-                    if !e.to_string().contains("connection closed") {
-                        tracing::debug!(client = %client_addr, error = %e, "Connection error");
-                    }
-                }
-            });
-        }
-    }
-
     /// Run the proxy server with graceful shutdown
     pub async fn run_until_shutdown(
-        &self,
-        mut shutdown: tokio::sync::oneshot::Receiver<()>,
+        mut self,
+        shutdown: tokio::sync::oneshot::Receiver<()>,
     ) -> Result<()> {
-        let addr: SocketAddr = self.config.proxy.bind_address.parse().map_err(|e| {
-            Error::config(format!(
-                "Invalid bind address '{}': {}",
-                self.config.proxy.bind_address, e
-            ))
-        })?;
-
-        let listener = TcpListener::bind(addr)
-            .await
-            .map_err(|e| Error::proxy(format!("Failed to bind to {}: {}", addr, e)))?;
-
-        let local_addr = listener
-            .local_addr()
-            .map_err(|e| Error::proxy(format!("Failed to get local address: {}", e)))?;
+        let local_addr = self.bind().await?;
         tracing::info!(address = %local_addr, "Proxy server listening");
-
-        let tunnel_handler = Arc::new(self.make_tunnel_handler());
-
-        loop {
-            tokio::select! {
-                _ = &mut shutdown => {
-                    tracing::info!("Shutdown signal received");
-                    return Ok(());
-                }
-                result = listener.accept() => {
-                    let (stream, client_addr) = match result {
-                        Ok(conn) => conn,
-                        Err(e) => {
-                            tracing::error!(error = %e, "Failed to accept connection");
-                            continue;
-                        }
-                    };
-
-                    tracing::debug!(client = %client_addr, "New connection");
-
-                    let tunnel_handler = tunnel_handler.clone();
-                    let filter_engine = self.filter_engine.clone();
-                    let log_allowed = self.config.logging.log_allowed_requests;
-                    let log_blocked = self.config.logging.log_blocked_requests;
-
-                    tokio::spawn(async move {
-                        let io = TokioIo::new(stream);
-
-                        let tunnel_handler = tunnel_handler.clone();
-                        let filter_engine = filter_engine.clone();
-
-                        let service = service_fn(move |req| {
-                            let handler = ProxyHandler::new(
-                                tunnel_handler.clone(),
-                                filter_engine.clone(),
-                            ).with_request_logging(log_allowed, log_blocked);
-                            async move { handler.handle(req).await }
-                        });
-
-                        if let Err(e) = http1::Builder::new()
-                            .preserve_header_case(true)
-                            .title_case_headers(true)
-                            .serve_connection(io, service)
-                            .with_upgrades()
-                            .await
-                        {
-                            if !e.to_string().contains("connection closed") {
-                                tracing::debug!(client = %client_addr, error = %e, "Connection error");
-                            }
-                        }
-                    });
-                }
-            }
-        }
+        self.serve(shutdown).await
     }
 
     /// Bind the server to its configured address and return the actual socket address.
