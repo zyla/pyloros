@@ -1,0 +1,434 @@
+//! Tests for git-specific rule filtering: repo-level and branch-level restrictions.
+//!
+//! These tests verify that git rules correctly control which operations are
+//! allowed based on git operation type, repo URL matching, and branch patterns.
+
+mod common;
+
+use common::{
+    create_test_repo, git_cgi_handler, git_http_backend_path, git_rule, git_rule_with_branches,
+    run_command_reported, RequestLog, TestCa, TestProxy, TestUpstream,
+};
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+use tempfile::TempDir;
+
+/// Helper: run a git command, assert it succeeds.
+fn run_git(args: &[&str], cwd: &Path) {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_git_fetch_rule_blocks_push() {
+    let backend_path = git_http_backend_path();
+
+    let t = test_report!("Fetch-only rule blocks push");
+    let ca = TestCa::generate();
+    t.setup("Generated test CA");
+
+    let tmp = TempDir::new().unwrap();
+    let repos_dir = create_test_repo(tmp.path(), "repo.git");
+    let bare_repo = repos_dir.join("repo.git");
+    run_git(&["config", "http.receivepack", "true"], &bare_repo);
+    t.setup("Created test repo with receivepack enabled");
+
+    let request_log: RequestLog = Arc::new(Mutex::new(Vec::new()));
+
+    let upstream = TestUpstream::start_reported(
+        &t,
+        &ca,
+        git_cgi_handler(backend_path, repos_dir, request_log.clone()),
+        "git http-backend CGI",
+    )
+    .await;
+
+    // Only allow fetch, not push
+    let proxy = TestProxy::start_reported(
+        &t,
+        &ca,
+        vec![git_rule("fetch", "https://localhost/*")],
+        upstream.port(),
+    )
+    .await;
+
+    let proxy_url = format!("http://127.0.0.1:{}", proxy.addr().port());
+
+    // Clone should succeed
+    let clone_dir = tmp.path().join("cloned");
+    let output = run_command_reported(
+        &t,
+        std::process::Command::new("git")
+            .args([
+                "clone",
+                "https://localhost/repo.git",
+                clone_dir.to_str().unwrap(),
+            ])
+            .env("HTTPS_PROXY", &proxy_url)
+            .env("GIT_SSL_CAINFO", &ca.cert_path)
+            .env("GIT_TERMINAL_PROMPT", "0"),
+    );
+    t.assert_eq("git clone succeeds", &output.status.code().unwrap(), &0);
+
+    // Make a commit and try to push — should fail
+    run_git(&["config", "user.email", "test@test.com"], &clone_dir);
+    run_git(&["config", "user.name", "Test User"], &clone_dir);
+    std::fs::write(clone_dir.join("newfile.txt"), "should not arrive\n").unwrap();
+    run_git(&["add", "newfile.txt"], &clone_dir);
+    run_git(&["commit", "-m", "Should be blocked"], &clone_dir);
+    t.action("Created commit to push");
+
+    let output = run_command_reported(
+        &t,
+        std::process::Command::new("git")
+            .args(["push"])
+            .current_dir(&clone_dir)
+            .env("HTTPS_PROXY", &proxy_url)
+            .env("GIT_SSL_CAINFO", &ca.cert_path)
+            .env("GIT_TERMINAL_PROMPT", "0"),
+    );
+    t.assert_true(
+        "git push fails (blocked)",
+        output.status.code().unwrap() != 0,
+    );
+
+    proxy.shutdown();
+    upstream.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_git_push_rule_blocks_fetch() {
+    let backend_path = git_http_backend_path();
+
+    let t = test_report!("Push-only rule blocks fetch/clone");
+    let ca = TestCa::generate();
+    t.setup("Generated test CA");
+
+    let tmp = TempDir::new().unwrap();
+    let repos_dir = create_test_repo(tmp.path(), "repo.git");
+    t.setup("Created test repo");
+
+    let request_log: RequestLog = Arc::new(Mutex::new(Vec::new()));
+
+    let upstream = TestUpstream::start_reported(
+        &t,
+        &ca,
+        git_cgi_handler(backend_path, repos_dir, request_log.clone()),
+        "git http-backend CGI",
+    )
+    .await;
+
+    // Only allow push, not fetch
+    let proxy = TestProxy::start_reported(
+        &t,
+        &ca,
+        vec![git_rule("push", "https://localhost/*")],
+        upstream.port(),
+    )
+    .await;
+
+    let proxy_url = format!("http://127.0.0.1:{}", proxy.addr().port());
+
+    // Clone should fail (fetch not allowed)
+    let clone_dir = tmp.path().join("cloned");
+    let output = run_command_reported(
+        &t,
+        std::process::Command::new("git")
+            .args([
+                "clone",
+                "https://localhost/repo.git",
+                clone_dir.to_str().unwrap(),
+            ])
+            .env("HTTPS_PROXY", &proxy_url)
+            .env("GIT_SSL_CAINFO", &ca.cert_path)
+            .env("GIT_TERMINAL_PROMPT", "0"),
+    );
+    t.assert_true(
+        "git clone fails (fetch blocked)",
+        output.status.code().unwrap() != 0,
+    );
+
+    proxy.shutdown();
+    upstream.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_git_rule_repo_filtering() {
+    let backend_path = git_http_backend_path();
+
+    let t = test_report!("Git rule filters by repo URL");
+    let ca = TestCa::generate();
+    t.setup("Generated test CA");
+
+    let tmp = TempDir::new().unwrap();
+
+    // Create two repos in the same GIT_PROJECT_ROOT
+    let repos_dir = create_test_repo(tmp.path(), "allowed.git");
+    // Create a second repo
+    let source2 = tmp.path().join("source2");
+    std::fs::create_dir_all(&source2).unwrap();
+    run_git(&["init"], &source2);
+    run_git(&["config", "user.email", "test@test.com"], &source2);
+    run_git(&["config", "user.name", "Test User"], &source2);
+    std::fs::write(source2.join("file.txt"), "other repo\n").unwrap();
+    run_git(&["add", "file.txt"], &source2);
+    run_git(&["commit", "-m", "Init other"], &source2);
+    run_git(
+        &[
+            "clone",
+            "--bare",
+            source2.to_str().unwrap(),
+            repos_dir.join("other.git").to_str().unwrap(),
+        ],
+        tmp.path(),
+    );
+    t.setup("Created allowed.git and other.git repos");
+
+    let request_log: RequestLog = Arc::new(Mutex::new(Vec::new()));
+
+    let upstream = TestUpstream::start_reported(
+        &t,
+        &ca,
+        git_cgi_handler(backend_path, repos_dir, request_log.clone()),
+        "git http-backend CGI",
+    )
+    .await;
+
+    // Only allow operations on allowed.git
+    let proxy = TestProxy::start_reported(
+        &t,
+        &ca,
+        vec![git_rule("*", "https://localhost/allowed.git")],
+        upstream.port(),
+    )
+    .await;
+
+    let proxy_url = format!("http://127.0.0.1:{}", proxy.addr().port());
+
+    // Clone allowed.git should succeed
+    let clone_allowed = tmp.path().join("clone-allowed");
+    let output = run_command_reported(
+        &t,
+        std::process::Command::new("git")
+            .args([
+                "clone",
+                "https://localhost/allowed.git",
+                clone_allowed.to_str().unwrap(),
+            ])
+            .env("HTTPS_PROXY", &proxy_url)
+            .env("GIT_SSL_CAINFO", &ca.cert_path)
+            .env("GIT_TERMINAL_PROMPT", "0"),
+    );
+    t.assert_eq(
+        "clone allowed.git succeeds",
+        &output.status.code().unwrap(),
+        &0,
+    );
+
+    // Clone other.git should fail
+    let clone_other = tmp.path().join("clone-other");
+    let output = run_command_reported(
+        &t,
+        std::process::Command::new("git")
+            .args([
+                "clone",
+                "https://localhost/other.git",
+                clone_other.to_str().unwrap(),
+            ])
+            .env("HTTPS_PROXY", &proxy_url)
+            .env("GIT_SSL_CAINFO", &ca.cert_path)
+            .env("GIT_TERMINAL_PROMPT", "0"),
+    );
+    t.assert_true(
+        "clone other.git fails (blocked)",
+        output.status.code().unwrap() != 0,
+    );
+
+    proxy.shutdown();
+    upstream.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_git_push_branch_allowed() {
+    let backend_path = git_http_backend_path();
+
+    let t = test_report!("Branch-restricted push allows matching branch");
+    let ca = TestCa::generate();
+    t.setup("Generated test CA");
+
+    let tmp = TempDir::new().unwrap();
+    let repos_dir = create_test_repo(tmp.path(), "repo.git");
+    let bare_repo = repos_dir.join("repo.git");
+    run_git(&["config", "http.receivepack", "true"], &bare_repo);
+    t.setup("Created test repo with receivepack enabled");
+
+    let request_log: RequestLog = Arc::new(Mutex::new(Vec::new()));
+
+    let upstream = TestUpstream::start_reported(
+        &t,
+        &ca,
+        git_cgi_handler(backend_path, repos_dir, request_log.clone()),
+        "git http-backend CGI",
+    )
+    .await;
+
+    // Allow all git ops, but push only to feature/* branches
+    let proxy = TestProxy::start_reported(
+        &t,
+        &ca,
+        vec![git_rule_with_branches(
+            "*",
+            "https://localhost/*",
+            &["feature/*"],
+        )],
+        upstream.port(),
+    )
+    .await;
+
+    let proxy_url = format!("http://127.0.0.1:{}", proxy.addr().port());
+
+    // Clone
+    let clone_dir = tmp.path().join("cloned");
+    let output = run_command_reported(
+        &t,
+        std::process::Command::new("git")
+            .args([
+                "clone",
+                "https://localhost/repo.git",
+                clone_dir.to_str().unwrap(),
+            ])
+            .env("HTTPS_PROXY", &proxy_url)
+            .env("GIT_SSL_CAINFO", &ca.cert_path)
+            .env("GIT_TERMINAL_PROMPT", "0"),
+    );
+    t.assert_eq("git clone succeeds", &output.status.code().unwrap(), &0);
+
+    // Create and push to feature/test branch
+    run_git(&["config", "user.email", "test@test.com"], &clone_dir);
+    run_git(&["config", "user.name", "Test User"], &clone_dir);
+    run_git(&["checkout", "-b", "feature/test"], &clone_dir);
+    std::fs::write(clone_dir.join("feature.txt"), "feature work\n").unwrap();
+    run_git(&["add", "feature.txt"], &clone_dir);
+    run_git(&["commit", "-m", "Feature commit"], &clone_dir);
+    t.action("Created commit on feature/test branch");
+
+    let output = run_command_reported(
+        &t,
+        std::process::Command::new("git")
+            .args(["push", "origin", "feature/test"])
+            .current_dir(&clone_dir)
+            .env("HTTPS_PROXY", &proxy_url)
+            .env("GIT_SSL_CAINFO", &ca.cert_path)
+            .env("GIT_TERMINAL_PROMPT", "0"),
+    );
+    t.assert_eq(
+        "git push to feature/test succeeds",
+        &output.status.code().unwrap(),
+        &0,
+    );
+
+    // Verify the bare repo received the push
+    let verify = std::process::Command::new("git")
+        .args(["show", "feature/test:feature.txt"])
+        .current_dir(&bare_repo)
+        .output()
+        .unwrap();
+    let content = String::from_utf8_lossy(&verify.stdout);
+    t.assert_contains("bare repo has feature file", &content, "feature work");
+
+    proxy.shutdown();
+    upstream.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_git_push_branch_blocked() {
+    let backend_path = git_http_backend_path();
+
+    let t = test_report!("Branch-restricted push blocks non-matching branch");
+    let ca = TestCa::generate();
+    t.setup("Generated test CA");
+
+    let tmp = TempDir::new().unwrap();
+    let repos_dir = create_test_repo(tmp.path(), "repo.git");
+    let bare_repo = repos_dir.join("repo.git");
+    run_git(&["config", "http.receivepack", "true"], &bare_repo);
+    t.setup("Created test repo with receivepack enabled");
+
+    let request_log: RequestLog = Arc::new(Mutex::new(Vec::new()));
+
+    let upstream = TestUpstream::start_reported(
+        &t,
+        &ca,
+        git_cgi_handler(backend_path, repos_dir, request_log.clone()),
+        "git http-backend CGI",
+    )
+    .await;
+
+    // Allow all git ops, but push only to feature/* branches
+    let proxy = TestProxy::start_reported(
+        &t,
+        &ca,
+        vec![git_rule_with_branches(
+            "*",
+            "https://localhost/*",
+            &["feature/*"],
+        )],
+        upstream.port(),
+    )
+    .await;
+
+    let proxy_url = format!("http://127.0.0.1:{}", proxy.addr().port());
+
+    // Clone
+    let clone_dir = tmp.path().join("cloned");
+    let output = run_command_reported(
+        &t,
+        std::process::Command::new("git")
+            .args([
+                "clone",
+                "https://localhost/repo.git",
+                clone_dir.to_str().unwrap(),
+            ])
+            .env("HTTPS_PROXY", &proxy_url)
+            .env("GIT_SSL_CAINFO", &ca.cert_path)
+            .env("GIT_TERMINAL_PROMPT", "0"),
+    );
+    t.assert_eq("git clone succeeds", &output.status.code().unwrap(), &0);
+
+    // Commit on main and try to push — should be blocked
+    run_git(&["config", "user.email", "test@test.com"], &clone_dir);
+    run_git(&["config", "user.name", "Test User"], &clone_dir);
+    std::fs::write(clone_dir.join("blocked.txt"), "should not arrive\n").unwrap();
+    run_git(&["add", "blocked.txt"], &clone_dir);
+    run_git(
+        &["commit", "-m", "Push to main (should be blocked)"],
+        &clone_dir,
+    );
+    t.action("Created commit on main branch");
+
+    let output = run_command_reported(
+        &t,
+        std::process::Command::new("git")
+            .args(["push", "origin", "main"])
+            .current_dir(&clone_dir)
+            .env("HTTPS_PROXY", &proxy_url)
+            .env("GIT_SSL_CAINFO", &ca.cert_path)
+            .env("GIT_TERMINAL_PROMPT", "0"),
+    );
+    t.assert_true(
+        "git push to main fails (branch blocked)",
+        output.status.code().unwrap() != 0,
+    );
+
+    proxy.shutdown();
+    upstream.shutdown();
+}
