@@ -49,6 +49,7 @@ enum Step {
     Action(String),
     AssertPass(String),
     AssertFail(String),
+    Output { label: String, text: String },
 }
 
 impl Step {
@@ -58,6 +59,7 @@ impl Step {
             Step::Action(msg) => format!("STEP action: {}", msg),
             Step::AssertPass(msg) => format!("STEP assert_pass: {}", msg),
             Step::AssertFail(msg) => format!("STEP assert_fail: {}", msg),
+            Step::Output { label, text } => format!("STEP output {}: {:?}", label, text),
         }
     }
 }
@@ -113,6 +115,13 @@ impl TestReport {
             .lock()
             .unwrap()
             .push(Step::Action(msg.to_string()));
+    }
+
+    pub fn output(&self, label: &str, text: &str) {
+        self.steps.lock().unwrap().push(Step::Output {
+            label: label.to_string(),
+            text: text.to_string(),
+        });
     }
 
     pub fn assert_eq<A, E>(&self, label: &str, actual: &A, expected: &E)
@@ -795,8 +804,18 @@ pub fn run_command_reported(
         format!("Run `{} {}`", program, args.join(" "))
     };
     t.action(desc);
-    cmd.output()
-        .unwrap_or_else(|e| panic!("failed to run {}: {}", program, e))
+    let output = cmd
+        .output()
+        .unwrap_or_else(|e| panic!("failed to run {}: {}", program, e));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stdout.is_empty() {
+        t.output("stdout", &stdout);
+    }
+    if !stderr.is_empty() {
+        t.output("stderr", &stderr);
+    }
+    output
 }
 
 // ---------------------------------------------------------------------------
