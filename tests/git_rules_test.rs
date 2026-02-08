@@ -7,7 +7,7 @@ mod common;
 
 use common::{
     create_test_repo, git_cgi_handler, git_http_backend_path, git_rule, git_rule_with_branches,
-    run_command_reported, ReportingClient, RequestLog, TestCa, TestProxy, TestUpstream,
+    ok_handler, run_command_reported, ReportingClient, RequestLog, TestCa, TestProxy, TestUpstream,
 };
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -465,4 +465,92 @@ async fn test_git_branch_restricted_rule_blocked_on_plain_http() {
     );
 
     proxy.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_fetch_only_rule_blocks_push_endpoints_directly() {
+    let t = test_report!("Fetch-only rule blocks push endpoints via direct HTTP requests");
+    let ca = TestCa::generate();
+    t.setup("Generated test CA");
+
+    let upstream =
+        TestUpstream::start_reported(&t, &ca, ok_handler("unreachable"), "dummy upstream").await;
+
+    // Only allow fetch, not push
+    let proxy = TestProxy::start_reported(
+        &t,
+        &ca,
+        vec![git_rule("fetch", "https://localhost/*")],
+        upstream.port(),
+    )
+    .await;
+
+    let client = ReportingClient::new(&t, proxy.addr(), &ca);
+
+    // POST to git-receive-pack should be blocked
+    let resp = client
+        .post("https://localhost/repo.git/git-receive-pack")
+        .await;
+    t.assert_eq(
+        "POST /git-receive-pack returns 451",
+        &resp.status().as_u16(),
+        &451u16,
+    );
+
+    // GET info/refs?service=git-receive-pack should be blocked
+    let resp = client
+        .get("https://localhost/repo.git/info/refs?service=git-receive-pack")
+        .await;
+    t.assert_eq(
+        "GET /info/refs?service=git-receive-pack returns 451",
+        &resp.status().as_u16(),
+        &451u16,
+    );
+
+    proxy.shutdown();
+    upstream.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_push_only_rule_blocks_fetch_endpoints_directly() {
+    let t = test_report!("Push-only rule blocks fetch endpoints via direct HTTP requests");
+    let ca = TestCa::generate();
+    t.setup("Generated test CA");
+
+    let upstream =
+        TestUpstream::start_reported(&t, &ca, ok_handler("unreachable"), "dummy upstream").await;
+
+    // Only allow push, not fetch
+    let proxy = TestProxy::start_reported(
+        &t,
+        &ca,
+        vec![git_rule("push", "https://localhost/*")],
+        upstream.port(),
+    )
+    .await;
+
+    let client = ReportingClient::new(&t, proxy.addr(), &ca);
+
+    // POST to git-upload-pack should be blocked
+    let resp = client
+        .post("https://localhost/repo.git/git-upload-pack")
+        .await;
+    t.assert_eq(
+        "POST /git-upload-pack returns 451",
+        &resp.status().as_u16(),
+        &451u16,
+    );
+
+    // GET info/refs?service=git-upload-pack should be blocked
+    let resp = client
+        .get("https://localhost/repo.git/info/refs?service=git-upload-pack")
+        .await;
+    t.assert_eq(
+        "GET /info/refs?service=git-upload-pack returns 451",
+        &resp.status().as_u16(),
+        &451u16,
+    );
+
+    proxy.shutdown();
+    upstream.shutdown();
 }

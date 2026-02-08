@@ -162,6 +162,7 @@ branches = ["feature/*", "fix/*"]
 - CLI integration tests for all subcommands (`run`, `generate-ca`, `validate-config`)
 - Tests run in GitHub Actions; coverage is reported
 - When testing integration with external tools (git, curl, claude CLI, etc.), always verify that traffic actually went through the proxy — don't just check that the tool succeeded. Record requests at the upstream handler or check proxy logs for expected entries.
+- When testing that an activity is blocked, don't only verify that the standard tool (e.g., `git push`) fails — also verify that individual protocol requests are independently blocked, since an attacker may craft requests directly, skipping discovery/negotiation steps.
 
 See `DECISIONS.md` for implementation details (E2E test architecture, port override mechanism).
 
