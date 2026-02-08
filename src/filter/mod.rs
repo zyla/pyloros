@@ -1,6 +1,6 @@
 //! Request filtering and pattern matching
 
-mod matcher;
+pub mod matcher;
 pub mod pktline;
 mod rules;
 
