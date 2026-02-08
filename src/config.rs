@@ -183,9 +183,11 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_report;
 
     #[test]
     fn test_parse_minimal_config() {
+        let t = test_report!("Parse minimal config");
         let toml = r#"
 [proxy]
 bind_address = "127.0.0.1:3128"
@@ -194,14 +196,27 @@ ca_key = "/path/to/ca.key"
 "#;
 
         let config = Config::parse(toml).unwrap();
-        assert_eq!(config.proxy.bind_address, "127.0.0.1:3128");
-        assert_eq!(config.proxy.ca_cert, Some("/path/to/ca.crt".to_string()));
-        assert_eq!(config.proxy.ca_key, Some("/path/to/ca.key".to_string()));
-        assert!(config.rules.is_empty());
+        t.assert_eq(
+            "bind_address",
+            &config.proxy.bind_address.as_str(),
+            &"127.0.0.1:3128",
+        );
+        t.assert_eq(
+            "ca_cert",
+            &config.proxy.ca_cert,
+            &Some("/path/to/ca.crt".to_string()),
+        );
+        t.assert_eq(
+            "ca_key",
+            &config.proxy.ca_key,
+            &Some("/path/to/ca.key".to_string()),
+        );
+        t.assert_true("no rules", config.rules.is_empty());
     }
 
     #[test]
     fn test_parse_config_with_rules() {
+        let t = test_report!("Parse config with rules");
         let toml = r#"
 [proxy]
 bind_address = "127.0.0.1:8080"
@@ -225,100 +240,102 @@ websocket = true
 "#;
 
         let config = Config::parse(toml).unwrap();
-        assert_eq!(config.rules.len(), 4);
-
-        assert_eq!(config.rules[0].method, "GET");
-        assert_eq!(config.rules[0].url, "https://api.example.com/health");
-        assert!(!config.rules[0].websocket);
-
-        assert_eq!(config.rules[1].method, "POST");
-        assert_eq!(
-            config.rules[1].url,
-            "https://api.example.com/users/*/profile"
+        t.assert_eq("rule count", &config.rules.len(), &4usize);
+        t.assert_eq("rule[0] method", &config.rules[0].method.as_str(), &"GET");
+        t.assert_eq(
+            "rule[0] url",
+            &config.rules[0].url.as_str(),
+            &"https://api.example.com/health",
         );
-
-        assert_eq!(config.rules[2].method, "*");
-        assert_eq!(config.rules[2].url, "https://*.github.com/*");
-
-        assert_eq!(config.rules[3].method, "GET");
-        assert!(config.rules[3].websocket);
+        t.assert_true("rule[0] not websocket", !config.rules[0].websocket);
+        t.assert_eq("rule[1] method", &config.rules[1].method.as_str(), &"POST");
+        t.assert_eq("rule[2] method", &config.rules[2].method.as_str(), &"*");
+        t.assert_true("rule[3] websocket", config.rules[3].websocket);
     }
 
     #[test]
     fn test_default_values() {
-        let toml = "";
-        let config = Config::parse(toml).unwrap();
+        let t = test_report!("Default config values");
+        let config = Config::parse("").unwrap();
 
-        assert_eq!(config.proxy.bind_address, "127.0.0.1:8080");
-        assert_eq!(config.logging.level, "info");
-        assert!(config.logging.log_allowed_requests);
-        assert!(config.logging.log_blocked_requests);
+        t.assert_eq(
+            "bind_address",
+            &config.proxy.bind_address.as_str(),
+            &"127.0.0.1:8080",
+        );
+        t.assert_eq("log level", &config.logging.level.as_str(), &"info");
+        t.assert_true("log allowed default", config.logging.log_allowed_requests);
+        t.assert_true("log blocked default", config.logging.log_blocked_requests);
     }
 
     #[test]
     fn test_logging_config_bool_false() {
+        let t = test_report!("log_requests = false disables both");
         let toml = r#"
 [logging]
 level = "debug"
 log_requests = false
 "#;
-
         let config = Config::parse(toml).unwrap();
-        assert_eq!(config.logging.level, "debug");
-        assert!(!config.logging.log_allowed_requests);
-        assert!(!config.logging.log_blocked_requests);
+        t.assert_eq("level", &config.logging.level.as_str(), &"debug");
+        t.assert_true("allowed disabled", !config.logging.log_allowed_requests);
+        t.assert_true("blocked disabled", !config.logging.log_blocked_requests);
     }
 
     #[test]
     fn test_logging_config_bool_true() {
+        let t = test_report!("log_requests = true enables both");
         let toml = r#"
 [logging]
 log_requests = true
 "#;
-
         let config = Config::parse(toml).unwrap();
-        assert!(config.logging.log_allowed_requests);
-        assert!(config.logging.log_blocked_requests);
+        t.assert_true("allowed enabled", config.logging.log_allowed_requests);
+        t.assert_true("blocked enabled", config.logging.log_blocked_requests);
     }
 
     #[test]
     fn test_logging_config_table_mixed() {
+        let t = test_report!("log_requests table with mixed values");
         let toml = r#"
 [logging]
 log_requests = { allowed = true, blocked = false }
 "#;
-
         let config = Config::parse(toml).unwrap();
-        assert!(config.logging.log_allowed_requests);
-        assert!(!config.logging.log_blocked_requests);
+        t.assert_true("allowed enabled", config.logging.log_allowed_requests);
+        t.assert_true("blocked disabled", !config.logging.log_blocked_requests);
     }
 
     #[test]
     fn test_logging_config_table_partial_defaults() {
+        let t = test_report!("log_requests table with partial keys defaults missing");
         let toml = r#"
 [logging]
 log_requests = { blocked = false }
 "#;
-
         let config = Config::parse(toml).unwrap();
-        assert!(config.logging.log_allowed_requests); // defaults to true
-        assert!(!config.logging.log_blocked_requests);
+        t.assert_true(
+            "allowed defaults to true",
+            config.logging.log_allowed_requests,
+        );
+        t.assert_true("blocked set to false", !config.logging.log_blocked_requests);
     }
 
     #[test]
     fn test_logging_config_omitted() {
+        let t = test_report!("Omitted log_requests defaults to both true");
         let toml = r#"
 [logging]
 level = "warn"
 "#;
-
         let config = Config::parse(toml).unwrap();
-        assert!(config.logging.log_allowed_requests);
-        assert!(config.logging.log_blocked_requests);
+        t.assert_true("allowed enabled", config.logging.log_allowed_requests);
+        t.assert_true("blocked enabled", config.logging.log_blocked_requests);
     }
 
     #[test]
     fn test_upstream_override_fields() {
+        let t = test_report!("Upstream override config fields");
         let toml = r#"
 [proxy]
 bind_address = "127.0.0.1:0"
@@ -327,31 +344,43 @@ ca_key = "/path/to/ca.key"
 upstream_override_port = 9443
 upstream_tls_ca = "/path/to/upstream-ca.crt"
 "#;
-
         let config = Config::parse(toml).unwrap();
-        assert_eq!(config.proxy.upstream_override_port, Some(9443));
-        assert_eq!(
-            config.proxy.upstream_tls_ca,
-            Some("/path/to/upstream-ca.crt".to_string())
+        t.assert_eq(
+            "override port",
+            &config.proxy.upstream_override_port,
+            &Some(9443),
+        );
+        t.assert_eq(
+            "upstream TLS CA",
+            &config.proxy.upstream_tls_ca,
+            &Some("/path/to/upstream-ca.crt".to_string()),
         );
     }
 
     #[test]
     fn test_upstream_override_fields_default_to_none() {
+        let t = test_report!("Upstream overrides default to None");
         let toml = r#"
 [proxy]
 bind_address = "127.0.0.1:8080"
 "#;
-
         let config = Config::parse(toml).unwrap();
-        assert_eq!(config.proxy.upstream_override_port, None);
-        assert_eq!(config.proxy.upstream_tls_ca, None);
+        t.assert_eq(
+            "override port None",
+            &config.proxy.upstream_override_port,
+            &None,
+        );
+        t.assert_eq(
+            "upstream TLS CA None",
+            &config.proxy.upstream_tls_ca,
+            &None::<String>,
+        );
     }
 
     #[test]
     fn test_invalid_toml() {
-        let toml = "this is not valid toml [[[";
-        let result = Config::parse(toml);
-        assert!(result.is_err());
+        let t = test_report!("Invalid TOML rejected");
+        let result = Config::parse("this is not valid toml [[[");
+        t.assert_true("parse error", result.is_err());
     }
 }

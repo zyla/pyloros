@@ -207,42 +207,48 @@ impl CertificateAuthority {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_report;
 
     #[test]
     fn test_generate_ca() {
+        let t = test_report!("Generate CA produces valid PEM");
         let ca = GeneratedCa::generate().unwrap();
-        assert!(ca.cert_pem.contains("BEGIN CERTIFICATE"));
-        assert!(ca.key_pem.contains("BEGIN PRIVATE KEY"));
+        t.assert_contains("cert PEM", &ca.cert_pem, "BEGIN CERTIFICATE");
+        t.assert_contains("key PEM", &ca.key_pem, "BEGIN PRIVATE KEY");
     }
 
     #[test]
     fn test_load_generated_ca() {
+        let t = test_report!("Load CA from generated PEM");
         let generated = GeneratedCa::generate().unwrap();
         let ca = CertificateAuthority::from_pem(&generated.cert_pem, &generated.key_pem).unwrap();
-        assert!(!ca.cert_der().is_empty());
+        t.assert_true("cert DER not empty", !ca.cert_der().is_empty());
     }
 
     #[test]
     fn test_generate_host_cert() {
+        let t = test_report!("Generate host cert for example.com");
         let generated = GeneratedCa::generate().unwrap();
         let ca = CertificateAuthority::from_pem(&generated.cert_pem, &generated.key_pem).unwrap();
 
         let (cert_der, key_der) = ca.generate_cert_for_host("example.com").unwrap();
-        assert!(!cert_der.is_empty());
-        assert!(!key_der.secret_der().is_empty());
+        t.assert_true("cert not empty", !cert_der.is_empty());
+        t.assert_true("key not empty", !key_der.secret_der().is_empty());
     }
 
     #[test]
     fn test_generate_host_cert_with_subdomain() {
+        let t = test_report!("Generate host cert for subdomain");
         let generated = GeneratedCa::generate().unwrap();
         let ca = CertificateAuthority::from_pem(&generated.cert_pem, &generated.key_pem).unwrap();
 
         let (cert_der, _) = ca.generate_cert_for_host("api.example.com").unwrap();
-        assert!(!cert_der.is_empty());
+        t.assert_true("cert not empty", !cert_der.is_empty());
     }
 
     #[test]
     fn test_save_and_load_ca() {
+        let t = test_report!("Save and reload CA from disk");
         let generated = GeneratedCa::generate().unwrap();
 
         let dir = tempfile::tempdir().unwrap();
@@ -251,8 +257,9 @@ mod tests {
 
         generated.save(&cert_path, &key_path).unwrap();
 
+        t.action("Load CA from saved files");
         let ca = CertificateAuthority::from_files(&cert_path, &key_path).unwrap();
         let (cert_der, _) = ca.generate_cert_for_host("test.com").unwrap();
-        assert!(!cert_der.is_empty());
+        t.assert_true("cert from loaded CA not empty", !cert_der.is_empty());
     }
 }

@@ -12,6 +12,7 @@ cargo test --test proxy_basic_test  # Run a specific integration test file
 cargo test pattern_matching  # Run tests matching a name pattern
 cargo clippy                 # Lint
 cargo fmt                    # Format code
+scripts/test-report.sh       # Run tests + generate test-report.md / test-report.html
 
 # Coverage (one-time setup: rustup component add llvm-tools-preview && cargo install cargo-llvm-cov)
 cargo llvm-cov                                  # Text summary
@@ -127,3 +128,9 @@ rather than appending to an existing one. This prevents merge conflicts when
 multiple features are developed in parallel across worktrees.
 
 Unit tests are inline in their respective modules (`config.rs`, `matcher.rs`, `rules.rs`, `ca.rs`, `mitm.rs`, `cache.rs`, `tunnel.rs`). Tests use `tempfile` for temporary directories and `wiremock` for HTTP mocking.
+
+### Test Reporting
+
+All tests use `TestReport` for structured reporting. Integration tests use `test_report!()` from `tests/common/mod.rs`; unit tests use `test_report!()` from `src/test_support.rs` (via `use crate::test_report;`). The report tool (`tools/test-report/`) runs `cargo test` with `TEST_REPORT_DIR` set, collects per-test report files, and generates `test-report.md` + `test-report.html`.
+
+Run `scripts/test-report.sh` to generate reports locally. CI uploads them as artifacts.

@@ -23,3 +23,8 @@ Thumbs.db
 lcov.info
 coverage-summary.txt
 /coverage/
+
+# Test report
+test-report.md
+test-report.html
+/tools/test-report/target/

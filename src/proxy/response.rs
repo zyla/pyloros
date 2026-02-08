@@ -33,16 +33,23 @@ pub fn error_response(message: &str) -> Response<BoxBody<Bytes, hyper::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_report;
 
     #[test]
     fn test_blocked_response() {
+        let t = test_report!("Blocked response returns 451");
         let resp = blocked_response("GET", "https://example.com/blocked");
-        assert_eq!(resp.status(), StatusCode::UNAVAILABLE_FOR_LEGAL_REASONS);
+        t.assert_eq(
+            "Status",
+            &resp.status(),
+            &StatusCode::UNAVAILABLE_FOR_LEGAL_REASONS,
+        );
     }
 
     #[test]
     fn test_error_response() {
+        let t = test_report!("Error response returns 502");
         let resp = error_response("test error");
-        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+        t.assert_eq("Status", &resp.status(), &StatusCode::BAD_GATEWAY);
     }
 }

@@ -1,7 +1,8 @@
 mod common;
 
 use common::{
-    echo_handler, ok_handler, rule, test_client, TestCa, TestProxy, TestUpstream, UpstreamHandler,
+    echo_handler, ok_handler, rule, ReportingClient, TestCa, TestProxy, TestUpstream,
+    UpstreamHandler,
 };
 
 // ---------------------------------------------------------------------------
@@ -11,78 +12,86 @@ use common::{
 /// Request headers are forwarded to upstream.
 #[tokio::test]
 async fn test_request_headers_forwarded() {
-    let ca = TestCa::generate();
-    let upstream = TestUpstream::start(&ca, echo_handler()).await;
+    let t = test_report!("Request headers forwarded to upstream");
 
-    let proxy = TestProxy::start(
+    let ca = TestCa::generate();
+    let upstream = TestUpstream::start_reported(&t, &ca, echo_handler(), "echo handler").await;
+    let proxy = TestProxy::start_reported(
+        &t,
         &ca,
         vec![rule("GET", "https://localhost/*")],
         upstream.port(),
     )
     .await;
 
-    let client = test_client(proxy.addr(), &ca);
+    let client = ReportingClient::new(&t, proxy.addr(), &ca);
     let resp = client
-        .get("https://localhost/headers")
-        .header("X-Custom-Header", "test-value")
-        .send()
-        .await
-        .unwrap();
+        .get_with_header("https://localhost/headers", "X-Custom-Header", "test-value")
+        .await;
 
-    assert_eq!(resp.status(), 200);
+    let status = resp.status().as_u16();
     let body = resp.text().await.unwrap();
-    assert!(
-        body.contains("x-custom-header: test-value"),
-        "Expected custom header in echo body, got: {}",
-        body
+
+    t.assert_eq("Response status", &status, &200u16);
+    t.assert_contains(
+        "Custom header in body",
+        &body,
+        "x-custom-header: test-value",
     );
 }
 
 /// Response headers are forwarded to client.
 #[tokio::test]
 async fn test_response_headers_forwarded() {
-    let ca = TestCa::generate();
-    let upstream = TestUpstream::start(&ca, echo_handler()).await;
+    let t = test_report!("Response headers forwarded to client");
 
-    let proxy = TestProxy::start(
+    let ca = TestCa::generate();
+    let upstream = TestUpstream::start_reported(&t, &ca, echo_handler(), "echo handler").await;
+    let proxy = TestProxy::start_reported(
+        &t,
         &ca,
         vec![rule("GET", "https://localhost/*")],
         upstream.port(),
     )
     .await;
 
-    let client = test_client(proxy.addr(), &ca);
-    let resp = client
-        .get("https://localhost/headers")
-        .send()
-        .await
-        .unwrap();
+    let client = ReportingClient::new(&t, proxy.addr(), &ca);
+    let resp = client.get("https://localhost/headers").await;
 
-    assert_eq!(resp.status(), 200);
-    // echo_handler sets X-Echo: true
-    assert_eq!(
-        resp.headers().get("X-Echo").unwrap().to_str().unwrap(),
-        "true"
-    );
+    let status = resp.status().as_u16();
+    let x_echo = resp
+        .headers()
+        .get("X-Echo")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    t.assert_eq("Response status", &status, &200u16);
+    t.assert_eq("X-Echo header", &x_echo.as_str(), &"true");
 }
 
 /// Upstream down returns 502 Bad Gateway.
 #[tokio::test]
 async fn test_upstream_down_returns_502() {
+    let t = test_report!("Upstream down returns 502");
+
     let ca = TestCa::generate();
     // Start and immediately shutdown the upstream so its port is dead
     let upstream = TestUpstream::start(&ca, ok_handler("nope")).await;
     let dead_port = upstream.port();
     upstream.shutdown();
-    // Give time for the upstream to close
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    let proxy = TestProxy::start(&ca, vec![rule("GET", "https://localhost/*")], dead_port).await;
+    t.setup("Upstream: shut down (dead port)");
+    let proxy =
+        TestProxy::start_reported(&t, &ca, vec![rule("GET", "https://localhost/*")], dead_port)
+            .await;
 
-    let client = test_client(proxy.addr(), &ca);
-    let resp = client.get("https://localhost/gone").send().await.unwrap();
+    let client = ReportingClient::new(&t, proxy.addr(), &ca);
+    let resp = client.get("https://localhost/gone").await;
 
-    assert_eq!(resp.status(), 502);
+    t.assert_eq("Response status", &resp.status().as_u16(), &502u16);
 
     proxy.shutdown();
 }
@@ -92,8 +101,9 @@ async fn test_upstream_down_returns_502() {
 async fn test_large_response_body() {
     use std::sync::Arc;
 
+    let t = test_report!("Large response body forwarded intact");
+
     let ca = TestCa::generate();
-    // Generate a ~100KB body
     let large_body: String = "x".repeat(100_000);
     let expected = large_body.clone();
 
@@ -109,22 +119,24 @@ async fn test_large_response_body() {
         })
     });
 
-    let upstream = TestUpstream::start(&ca, handler).await;
-
-    let proxy = TestProxy::start(
+    let upstream = TestUpstream::start_reported(&t, &ca, handler, "returns 100KB body").await;
+    let proxy = TestProxy::start_reported(
+        &t,
         &ca,
         vec![rule("GET", "https://localhost/*")],
         upstream.port(),
     )
     .await;
 
-    let client = test_client(proxy.addr(), &ca);
-    let resp = client.get("https://localhost/large").send().await.unwrap();
+    let client = ReportingClient::new(&t, proxy.addr(), &ca);
+    let resp = client.get("https://localhost/large").await;
 
-    assert_eq!(resp.status(), 200);
+    let status = resp.status().as_u16();
     let body = resp.text().await.unwrap();
-    assert_eq!(body.len(), expected.len());
-    assert_eq!(body, expected);
+
+    t.assert_eq("Response status", &status, &200u16);
+    t.assert_eq("Body length", &body.len(), &expected.len());
+    t.assert_eq("Body content matches", &body, &expected);
 
     proxy.shutdown();
     upstream.shutdown();
@@ -140,13 +152,26 @@ async fn test_connect_non_443_port_blocked() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
 
-    let ca = TestCa::generate();
-    let upstream = TestUpstream::start(&ca, ok_handler("should not reach")).await;
+    let t = test_report!("CONNECT to non-443 port blocked");
 
-    let proxy =
-        TestProxy::start(&ca, vec![rule("*", "https://localhost/*")], upstream.port()).await;
+    let ca = TestCa::generate();
+    let upstream = TestUpstream::start_reported(
+        &t,
+        &ca,
+        ok_handler("should not reach"),
+        "returns 'should not reach'",
+    )
+    .await;
+    let proxy = TestProxy::start_reported(
+        &t,
+        &ca,
+        vec![rule("*", "https://localhost/*")],
+        upstream.port(),
+    )
+    .await;
 
     // Raw TCP connect to proxy, send CONNECT with non-443 port
+    t.action("Raw TCP CONNECT localhost:8080 (non-443 port)");
     let mut tcp = TcpStream::connect(proxy.addr()).await.unwrap();
     let connect_req = "CONNECT localhost:8080 HTTP/1.1\r\nHost: localhost:8080\r\n\r\n";
     tcp.write_all(connect_req.as_bytes()).await.unwrap();
@@ -154,23 +179,18 @@ async fn test_connect_non_443_port_blocked() {
     // Read response
     let mut buf = [0u8; 4096];
     let n = tcp.read(&mut buf).await.unwrap();
-    let response = String::from_utf8_lossy(&buf[..n]);
+    let response = String::from_utf8_lossy(&buf[..n]).to_string();
 
-    // Should be blocked with 451
-    assert!(
-        response.starts_with("HTTP/1.1 451"),
-        "Expected 451 response, got: {}",
-        response
+    t.assert_starts_with("Response starts with 451", &response, "HTTP/1.1 451");
+    t.assert_contains(
+        "X-Blocked-By header",
+        &response,
+        "X-Blocked-By: redlimitador",
     );
-    assert!(
-        response.contains("X-Blocked-By: redlimitador"),
-        "Expected X-Blocked-By header, got: {}",
-        response
-    );
-    assert!(
-        response.contains("Request blocked by proxy policy"),
-        "Expected blocked-by-policy message in body, got: {}",
-        response
+    t.assert_contains(
+        "Blocking reason in body",
+        &response,
+        "Request blocked by proxy policy",
     );
 
     proxy.shutdown();

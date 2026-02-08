@@ -4,7 +4,7 @@ A default-deny allowlist-based HTTPS filtering proxy for controlling AI agent ne
 
 ## Purpose of this document
 
-It is a declarative specification of what we want this product to be: features, technical choices (libraries, protocols, testing strategy), and configuration format. Code should ultimately be maintained to match the requirements here. When we want to change something in the product, we first modify the SPEC.
+It is a declarative specification of what we want this product to be: features, behavior, technical choices (libraries, protocols), configuration format, and developer experience (CI/CD, tooling, workflow). It describes *what* and *why*, not *how* — implementation details like internal APIs, struct names, or macro usage belong in code and code comments, not here. Code and infrastructure should ultimately be maintained to match the requirements here. When we want to change something, we first modify the SPEC.
 
 ## Deployment Model
 
@@ -125,6 +125,14 @@ These overrides are also exposed as optional config fields (`upstream_override_p
 ### Binary-Level Tests
 
 Binary-level smoke tests spawn the actual `redlimitador` binary and drive it with `curl`. They verify end-to-end behavior including config parsing, CLI argument handling, and process lifecycle. The proxy prints its actual listening address to stderr so tests can use `bind_address = "127.0.0.1:0"` and discover the port at runtime. `curl` is configured via the `HTTPS_PROXY` environment variable — the same mechanism real clients use — rather than `--proxy` flags.
+
+### Test Report Generation
+
+Tests produce a human-readable report showing, for each test: what was done, what the result was, and what assertions were checked. The report is tightly coupled to actual test execution — descriptions are derived from real parameters (URLs, rules, CLI args), making drift between tests and report impossible.
+
+- A standalone report generator tool (`tools/test-report/`) runs the test suite and produces Markdown + HTML output.
+- The Markdown report is published to the GitHub Actions job summary so it's visible directly in the run without downloading artifacts.
+- Reports are also uploaded as CI artifacts.
 
 ## Documentation
 

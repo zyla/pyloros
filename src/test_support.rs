@@ -1,0 +1,170 @@
+//! Test report infrastructure for unit tests.
+//!
+//! This module provides TestReport for recording test steps and writing
+//! structured report files consumed by the test-report generator tool.
+//! Only compiled during test builds (`#[cfg(test)]`).
+
+use std::fmt::{Debug, Display};
+use std::path::PathBuf;
+use std::sync::Mutex;
+
+/// Auto-detect the test name from the calling function.
+/// Works for both sync and async test functions.
+#[macro_export]
+macro_rules! test_report {
+    ($title:expr) => {{
+        fn f() {}
+        fn type_name_of<T>(_: T) -> &'static str {
+            std::any::type_name::<T>()
+        }
+        let name = type_name_of(f);
+        // Strip "::f" suffix
+        let name = &name[..name.len() - 3];
+        // In async fns, the path ends with "::{{closure}}" — strip that too
+        let name = name.strip_suffix("::{{closure}}").unwrap_or(name);
+        $crate::test_support::TestReport::new(name, $title)
+    }};
+}
+
+enum Step {
+    Setup(String),
+    Action(String),
+    AssertPass(String),
+    AssertFail(String),
+}
+
+impl Step {
+    fn to_report_line(&self) -> String {
+        match self {
+            Step::Setup(msg) => format!("STEP setup: {}", msg),
+            Step::Action(msg) => format!("STEP action: {}", msg),
+            Step::AssertPass(msg) => format!("STEP assert_pass: {}", msg),
+            Step::AssertFail(msg) => format!("STEP assert_fail: {}", msg),
+        }
+    }
+}
+
+pub struct TestReport {
+    full_path: String,
+    title: String,
+    steps: Mutex<Vec<Step>>,
+    report_dir: Option<PathBuf>,
+}
+
+impl TestReport {
+    pub fn new(full_path: &str, title: &str) -> Self {
+        let report_dir = std::env::var("TEST_REPORT_DIR").ok().map(PathBuf::from);
+        Self {
+            full_path: full_path.to_string(),
+            title: title.to_string(),
+            steps: Mutex::new(Vec::new()),
+            report_dir,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn setup(&self, msg: impl Display) {
+        self.steps
+            .lock()
+            .unwrap()
+            .push(Step::Setup(msg.to_string()));
+    }
+
+    #[allow(dead_code)]
+    pub fn action(&self, msg: impl Display) {
+        self.steps
+            .lock()
+            .unwrap()
+            .push(Step::Action(msg.to_string()));
+    }
+
+    pub fn assert_eq<A, E>(&self, label: &str, actual: &A, expected: &E)
+    where
+        A: PartialEq<E> + Debug,
+        E: Debug,
+    {
+        let pass = actual == expected;
+        let msg = format!("{}: {:?} == {:?}", label, actual, expected);
+        self.steps.lock().unwrap().push(if pass {
+            Step::AssertPass(msg)
+        } else {
+            Step::AssertFail(msg.clone())
+        });
+        assert_eq!(actual, expected, "{}", label);
+    }
+
+    #[allow(dead_code)]
+    pub fn assert_contains(&self, label: &str, haystack: &str, needle: &str) {
+        let pass = haystack.contains(needle);
+        let msg = format!("{}: {:?} contains {:?}", label, haystack, needle);
+        self.steps.lock().unwrap().push(if pass {
+            Step::AssertPass(msg)
+        } else {
+            Step::AssertFail(msg.clone())
+        });
+        assert!(
+            pass,
+            "{}: {:?} does not contain {:?}",
+            label, haystack, needle
+        );
+    }
+
+    pub fn assert_true(&self, label: &str, value: bool) {
+        let msg = format!("{}: {}", label, value);
+        self.steps.lock().unwrap().push(if value {
+            Step::AssertPass(msg)
+        } else {
+            Step::AssertFail(msg.clone())
+        });
+        assert!(value, "{}", label);
+    }
+
+    /// Extract the group name (test file module) from the full path.
+    fn group(&self) -> &str {
+        let parts: Vec<&str> = self.full_path.split("::").collect();
+        if parts.len() >= 2 {
+            parts[parts.len() - 2]
+        } else {
+            &self.full_path
+        }
+    }
+
+    /// Extract the test name (last segment) from the full path.
+    fn name(&self) -> &str {
+        self.full_path
+            .rsplit("::")
+            .next()
+            .unwrap_or(&self.full_path)
+    }
+
+    fn write_report(&self) {
+        let Some(dir) = &self.report_dir else {
+            return;
+        };
+
+        let panicking = std::thread::panicking();
+        let result = if panicking { "fail" } else { "pass" };
+
+        let steps = self.steps.lock().unwrap();
+        let mut lines = Vec::new();
+        lines.push(format!("GROUP: {}", self.group()));
+        lines.push(format!("NAME: {}", self.name()));
+        lines.push(format!("TITLE: {}", self.title));
+        for step in steps.iter() {
+            lines.push(step.to_report_line());
+        }
+        lines.push(format!("RESULT: {}", result));
+        lines.push(String::new());
+
+        let sanitized = self.full_path.replace("::", "__");
+        let path = dir.join(format!("{}.txt", sanitized));
+        let _ = std::fs::create_dir_all(dir);
+        let _ = std::fs::write(path, lines.join("\n"));
+    }
+}
+
+impl Drop for TestReport {
+    fn drop(&mut self) {
+        self.write_report();
+    }
+}

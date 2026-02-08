@@ -30,7 +30,23 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test
+        with:
+          workspaces: ". -> target\ntools/test-report -> tools/test-report/target"
+      - name: Build test report tool
+        run: cargo build --manifest-path tools/test-report/Cargo.toml --release -q
+      - name: Run tests with report generation
+        run: ./tools/test-report/target/release/test-report
+        if: always()
+      - name: Publish report to job summary
+        if: always()
+        run: cat test-report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-report
+          path: |
+            test-report.md
+            test-report.html
 
   coverage:
     name: Coverage
