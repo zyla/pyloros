@@ -173,6 +173,8 @@ async fn test_http_post_with_body() {
 /// in the format `host:port` for non-80 ports.
 #[tokio::test]
 async fn test_host_header_constructed_when_absent() {
+    let t = test_report!("Host header constructed when client omits it");
+
     let ca = TestCa::generate();
     let upstream = MockServer::start().await;
     Mock::given(any())
@@ -192,21 +194,18 @@ async fn test_host_header_constructed_when_absent() {
     let mut buf = vec![0u8; 4096];
     let n = stream.read(&mut buf).await.unwrap();
     let response = String::from_utf8_lossy(&buf[..n]);
-    assert!(
-        response.contains("200"),
-        "Expected 200 response, got: {}",
-        response
-    );
+    t.assert_true("Response contains 200", response.contains("200"));
 
     // Verify upstream received a constructed Host header
     let received = upstream.received_requests().await.unwrap();
-    assert_eq!(received.len(), 1);
+    t.assert_eq("Request count", &received.len(), &1usize);
     let req = &received[0];
     let host_value = req.headers.get("host").unwrap().to_str().unwrap();
-    assert_eq!(
-        host_value,
-        format!("localhost:{}", port),
-        "Proxy should construct Host: localhost:<port> when client omits Host"
+    let expected_host = format!("localhost:{}", port);
+    t.assert_eq(
+        "Constructed Host header",
+        &host_value,
+        &expected_host.as_str(),
     );
 
     proxy.shutdown();
@@ -216,6 +215,8 @@ async fn test_host_header_constructed_when_absent() {
 /// and does NOT overwrite it with a constructed one.
 #[tokio::test]
 async fn test_host_header_preserved_when_present() {
+    let t = test_report!("Client-provided Host header preserved by proxy");
+
     let ca = TestCa::generate();
     let upstream = MockServer::start().await;
     Mock::given(any())
@@ -237,21 +238,14 @@ async fn test_host_header_preserved_when_present() {
     let mut buf = vec![0u8; 4096];
     let n = stream.read(&mut buf).await.unwrap();
     let response = String::from_utf8_lossy(&buf[..n]);
-    assert!(
-        response.contains("200"),
-        "Expected 200 response, got: {}",
-        response
-    );
+    t.assert_true("Response contains 200", response.contains("200"));
 
     // Verify upstream received the original Host header, not a constructed one
     let received = upstream.received_requests().await.unwrap();
-    assert_eq!(received.len(), 1);
+    t.assert_eq("Request count", &received.len(), &1usize);
     let req = &received[0];
     let host_value = req.headers.get("host").unwrap().to_str().unwrap();
-    assert_eq!(
-        host_value, "custom.example.com",
-        "Proxy should preserve client-provided Host header, not overwrite it"
-    );
+    t.assert_eq("Preserved Host header", &host_value, &"custom.example.com");
 
     proxy.shutdown();
 }
