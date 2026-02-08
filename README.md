@@ -29,6 +29,32 @@ curl -sL https://github.com/zyla/redlimitador/releases/download/${VERSION}/redli
 sudo mv redlimitador-${VERSION}-x86_64-unknown-linux-musl/redlimitador /usr/local/bin/
 ```
 
+### Docker image
+
+A Docker image is published to `ghcr.io/zyla/redlimitador`:
+
+```bash
+docker pull ghcr.io/zyla/redlimitador:latest
+```
+
+Available tags:
+- `vX.Y.Z` — specific release version
+- `latest` — most recent release
+- `edge` — latest build from `main` (may be unstable)
+
+Run directly:
+
+```bash
+docker run --rm \
+  -v ./config.toml:/etc/redlimitador/config.toml:ro \
+  -v ./certs:/certs:ro \
+  -p 8080:8080 \
+  ghcr.io/zyla/redlimitador:latest \
+  run --config /etc/redlimitador/config.toml \
+      --ca-cert /certs/ca.crt --ca-key /certs/ca.key \
+      --bind 0.0.0.0:8080
+```
+
 ### Latest development build
 
 A rolling pre-release is built from `main` on every push:
@@ -192,13 +218,15 @@ The proxy container runs redlimitador with your config. The sandbox container ge
 | Flag | Description |
 |------|-------------|
 | `--config FILE` | Proxy config file with rules (required) |
-| `--binary PATH` | Path to redlimitador binary (auto-detected from `target/`) |
+| `--image IMAGE` | Docker image for the proxy (default: `ghcr.io/zyla/redlimitador:latest`) |
+| `--binary PATH` | Path to local binary (builds a temporary Docker image) |
 | `--ca-dir DIR` | Use existing CA certs (default: auto-generate to temp dir) |
 | `--keep` | Don't clean up on exit (for debugging) |
 
 ### Notes
 
-- The binary is auto-detected: musl static binary is preferred (works in any container), glibc fallback with a warning
+- By default, uses the published Docker image — no local build needed
+- Use `--binary` to test a locally-built binary (builds a temporary Docker image)
 - CA certs are auto-generated unless `--ca-dir` is provided
 - All resources (containers, networks) are cleaned up on exit unless `--keep` is used
 - Run `scripts/test-docker-sandbox.sh` to verify the setup works
