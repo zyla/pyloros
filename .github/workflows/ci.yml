@@ -50,8 +50,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           SUMMARY=$(sed -n '3p' test-report.md)
-          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          printf -v BODY '## Test Report\n\n%s\n\n[View full report](%s) (Job Summary tab)' "$SUMMARY" "$RUN_URL"
+          JOB_ID=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" \
+            --jq '.jobs[] | select(.name == "Test") | .id')
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}#summary-${JOB_ID}"
+          printf -v BODY '## Test Report\n\n%s\n\n[View full report](%s)' "$SUMMARY" "$RUN_URL"
 
           # Update existing comment or create new one
           COMMENT_ID=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
