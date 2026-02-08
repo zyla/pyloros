@@ -70,8 +70,6 @@ impl ProxyHandler {
 
         // Clone what we need for the spawned task
         let tunnel_handler = self.tunnel_handler.clone();
-        let log_allowed = self.log_allowed_requests;
-        let log_blocked = self.log_blocked_requests;
 
         // Spawn the tunnel handling
         tokio::spawn(async move {
@@ -83,10 +81,7 @@ impl ProxyHandler {
                 }
             };
 
-            if let Err(e) = tunnel_handler
-                .run_mitm_tunnel(upgraded, &host, port, log_allowed, log_blocked)
-                .await
-            {
+            if let Err(e) = tunnel_handler.run_mitm_tunnel(upgraded, &host, port).await {
                 // Don't log connection closed errors
                 let err_str = e.to_string();
                 if !err_str.contains("connection closed") && !err_str.contains("early eof") {

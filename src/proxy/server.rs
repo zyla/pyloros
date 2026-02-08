@@ -319,7 +319,11 @@ impl ProxyServer {
 
     fn make_tunnel_handler(&self) -> TunnelHandler {
         let mut handler =
-            TunnelHandler::new(self.mitm_generator.clone(), self.filter_engine.clone());
+            TunnelHandler::new(self.mitm_generator.clone(), self.filter_engine.clone())
+                .with_request_logging(
+                    self.config.logging.log_allowed_requests,
+                    self.config.logging.log_blocked_requests,
+                );
         if let Some(port) = self.upstream_port_override {
             handler = handler.with_upstream_port_override(port);
         }
