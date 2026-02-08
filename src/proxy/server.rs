@@ -21,6 +21,7 @@ pub struct ProxyServer {
     filter_engine: Arc<FilterEngine>,
     credential_engine: Arc<CredentialEngine>,
     mitm_generator: Arc<MitmCertificateGenerator>,
+    resolved_auth: Option<(String, String)>,
     listener: Option<TcpListener>,
     upstream_port_override: Option<u16>,
     upstream_host_override: Option<String>,
@@ -51,9 +52,13 @@ impl ProxyServer {
         // Build credential engine
         let credential_engine = Arc::new(CredentialEngine::new(config.credentials.clone())?);
 
+        // Resolve auth credentials at startup (expands ${ENV_VAR})
+        let resolved_auth = config.resolved_auth()?;
+
         tracing::info!(
             rules = filter_engine.rule_count(),
             credentials = credential_engine.credential_count(),
+            auth = resolved_auth.is_some(),
             "Filter engine initialized"
         );
 
@@ -62,6 +67,7 @@ impl ProxyServer {
             filter_engine,
             credential_engine,
             mitm_generator,
+            resolved_auth,
             listener: None,
             upstream_port_override: None,
             upstream_host_override: None,
@@ -81,6 +87,7 @@ impl ProxyServer {
             filter_engine,
             credential_engine,
             mitm_generator,
+            resolved_auth: None,
             listener: None,
             upstream_port_override: None,
             upstream_host_override: None,
@@ -171,6 +178,7 @@ impl ProxyServer {
 
                     let tunnel_handler = tunnel_handler.clone();
                     let filter_engine = self.filter_engine.clone();
+                    let auth = self.resolved_auth.clone();
                     let log_allowed = self.config.logging.log_allowed_requests;
                     let log_blocked = self.config.logging.log_blocked_requests;
 
@@ -179,12 +187,15 @@ impl ProxyServer {
 
                         let tunnel_handler = tunnel_handler.clone();
                         let filter_engine = filter_engine.clone();
+                        let auth = auth.clone();
 
                         let service = service_fn(move |req| {
                             let handler = ProxyHandler::new(
                                 tunnel_handler.clone(),
                                 filter_engine.clone(),
-                            ).with_request_logging(log_allowed, log_blocked);
+                            )
+                            .with_request_logging(log_allowed, log_blocked)
+                            .with_auth(auth.clone());
                             async move { handler.handle(req).await }
                         });
 
