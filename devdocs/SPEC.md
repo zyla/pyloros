@@ -213,6 +213,13 @@ Statically-linked Linux x86_64 binaries (musl) are published as GitHub Release a
 
 A rolling `latest` pre-release is built from `main` on every push. It uses a fixed `latest` git tag (force-moved to HEAD) and is marked as a prerelease with `make_latest: false` so it doesn't override the versioned "Latest release" in the GitHub UI.
 
+### Docker Sandbox
+
+A helper script (`scripts/docker-sandbox.sh`) runs a Docker container with all network access
+routed exclusively through the redlimitador proxy using Docker internal networks. The sandbox
+container is placed on an `--internal` Docker network with no direct internet access; the proxy
+container bridges the internal and external networks, forwarding only allowed requests.
+
 ## Documentation
 
 The project README (`README.md`) must contain:

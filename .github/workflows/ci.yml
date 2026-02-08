@@ -73,6 +73,8 @@ jobs:
           path: |
             test-report.md
             test-report.html
+      - name: Run Docker sandbox tests
+        run: scripts/test-docker-sandbox.sh
 
   coverage:
     name: Coverage
