@@ -14,6 +14,7 @@ use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 use super::response::{blocked_response, error_response, git_blocked_push_response};
 use crate::error::{Error, Result};
+use crate::filter::lfs;
 use crate::filter::pktline;
 use crate::filter::{CredentialEngine, FilterEngine, FilterResult, RequestInfo};
 use crate::tls::MitmCertificateGenerator;
@@ -196,6 +197,64 @@ impl TunnelHandler {
                 // Inject credentials
                 self.credential_engine
                     .inject(&request_info, &mut parts.headers);
+
+                // Forward with the buffered body
+                let connect_port = self.upstream_port_override.unwrap_or(port);
+                let full_body = Full::new(body_bytes).map_err(|e| match e {}).boxed();
+                let req = match rebuild_request_for_upstream(parts, full_body, host, connect_port) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to rebuild request");
+                        return Ok(error_response(&e.to_string()));
+                    }
+                };
+                let result = forward_request_boxed(
+                    req,
+                    host.to_string(),
+                    connect_port,
+                    self.upstream_tls_config.clone(),
+                )
+                .await;
+
+                return match result {
+                    Ok(resp) => Ok(resp),
+                    Err(e) => {
+                        tracing::error!(method = %method, url = %full_url, error = %e, "Failed to forward request");
+                        Ok(error_response(&e.to_string()))
+                    }
+                };
+            }
+            FilterResult::AllowedWithLfsCheck(ref allowed_ops) => {
+                if self.log_allowed_requests {
+                    tracing::info!(
+                        method = %method,
+                        url = %full_url,
+                        "ALLOWED (LFS check pending)"
+                    );
+                }
+
+                // Buffer the request body to inspect the LFS operation field
+                let (parts, body) = req.into_parts();
+                let body_bytes = body
+                    .collect()
+                    .await
+                    .map_err(|e| {
+                        tracing::error!(error = %e, "Failed to buffer request body for LFS check");
+                        e
+                    })?
+                    .to_bytes();
+
+                if !lfs::check_lfs_operation(&body_bytes, allowed_ops) {
+                    if self.log_blocked_requests {
+                        tracing::warn!(
+                            method = %method,
+                            url = %full_url,
+                            allowed_ops = ?allowed_ops,
+                            "BLOCKED (LFS operation not allowed)"
+                        );
+                    }
+                    return Ok(blocked_response(&method, &full_url));
+                }
 
                 // Forward with the buffered body
                 let connect_port = self.upstream_port_override.unwrap_or(port);
