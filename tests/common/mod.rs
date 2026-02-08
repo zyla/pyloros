@@ -694,7 +694,14 @@ impl TestProxy {
             "Proxy with rules: [{}] (host override: {})",
             desc, upstream_host
         ));
-        Self::start_inner_with_host(ca, rules, upstream_port, Some(upstream_host.to_string())).await
+        Self::start_inner_with_host(
+            ca,
+            rules,
+            Vec::new(),
+            upstream_port,
+            Some(upstream_host.to_string()),
+        )
+        .await
     }
 
     async fn start_inner(
@@ -703,12 +710,13 @@ impl TestProxy {
         credentials: Vec<redlimitador::config::Credential>,
         upstream_port: u16,
     ) -> Self {
-        Self::start_inner_with_host(ca, rules, upstream_port, None).await
+        Self::start_inner_with_host(ca, rules, credentials, upstream_port, None).await
     }
 
     async fn start_inner_with_host(
         ca: &TestCa,
         rules: Vec<redlimitador::config::Rule>,
+        credentials: Vec<redlimitador::config::Credential>,
         upstream_port: u16,
         upstream_host: Option<String>,
     ) -> Self {
