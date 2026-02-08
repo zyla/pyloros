@@ -7,7 +7,7 @@ mod common;
 
 use common::{
     create_test_repo, git_cgi_handler, git_http_backend_path, git_rule, git_rule_with_branches,
-    run_command_reported, RequestLog, TestCa, TestProxy, TestUpstream,
+    run_command_reported, ReportingClient, RequestLog, TestCa, TestProxy, TestUpstream,
 };
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -431,4 +431,38 @@ async fn test_git_push_branch_blocked() {
 
     proxy.shutdown();
     upstream.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_git_branch_restricted_rule_blocked_on_plain_http() {
+    let t = test_report!("Branch-restricted git rule blocks plain HTTP (can't inspect body)");
+    let ca = TestCa::generate();
+    t.setup("Generated test CA");
+
+    // Use a dummy upstream port — the request should be blocked before forwarding
+    let proxy = TestProxy::start_reported(
+        &t,
+        &ca,
+        vec![git_rule_with_branches(
+            "push",
+            "http://plain-http-host.invalid/*",
+            &["feature/*"],
+        )],
+        1, // dummy port, not used for plain HTTP
+    )
+    .await;
+
+    let client = ReportingClient::new_plain(&t, proxy.addr());
+
+    // POST to the git-receive-pack endpoint via plain HTTP
+    let resp = client
+        .post("http://plain-http-host.invalid/repo.git/git-receive-pack")
+        .await;
+    t.assert_eq(
+        "plain HTTP POST to branch-restricted endpoint returns 451",
+        &resp.status().as_u16(),
+        &451u16,
+    );
+
+    proxy.shutdown();
 }

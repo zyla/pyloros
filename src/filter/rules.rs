@@ -569,6 +569,51 @@ mod tests {
     }
 
     #[test]
+    fn test_git_rule_branch_check_on_http_scheme() {
+        let t = test_report!(
+            "Git rule with branches returns AllowedWithBranchCheck for http:// requests"
+        );
+        let rule = Rule {
+            method: None,
+            url: "http://example.com/repo.git".to_string(),
+            websocket: false,
+            git: Some("push".to_string()),
+            branches: Some(vec!["feature/*".to_string()]),
+        };
+        let engine = FilterEngine::new(vec![rule]).unwrap();
+
+        // POST to the git-receive-pack endpoint over http://
+        let req = RequestInfo::http(
+            "POST",
+            "http",
+            "example.com",
+            None,
+            "/repo.git/git-receive-pack",
+            None,
+        );
+        let result = engine.check(&req);
+        t.assert_true(
+            "returns AllowedWithBranchCheck (not Allowed or Blocked)",
+            matches!(result, FilterResult::AllowedWithBranchCheck(_)),
+        );
+
+        // GET discovery endpoint has no branch restriction → Allowed
+        let discovery = RequestInfo::http(
+            "GET",
+            "http",
+            "example.com",
+            None,
+            "/repo.git/info/refs",
+            Some("service=git-receive-pack"),
+        );
+        let result = engine.check(&discovery);
+        t.assert_true(
+            "discovery endpoint returns Allowed (no branch check)",
+            matches!(result, FilterResult::Allowed),
+        );
+    }
+
+    #[test]
     fn test_complex_github_pattern() {
         let t = test_report!("Complex GitHub-like wildcard patterns");
         let engine = FilterEngine::new(vec![

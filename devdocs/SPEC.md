@@ -21,6 +21,7 @@ The intended deployment is one proxy per VM/container running an AI agent. All o
 - Hop-by-hop header stripping per RFC 7230 for forwarded HTTP requests
 - CONNECT restricted to port 443 (non-443 CONNECT requests are blocked)
 - Allowlist rule engine: requests must match at least one rule to be allowed; everything else is blocked with HTTP 451
+- **Default-deny for unverifiable restrictions**: when a rule requires fine-grained inspection (e.g. branch-level body inspection for git push) but the request arrives on a code path that cannot perform that inspection (e.g. plain HTTP instead of HTTPS CONNECT), the request is blocked rather than silently allowed. If we can't verify a restriction, we deny.
 - TOML configuration file
 
 ### Rule Matching
