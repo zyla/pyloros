@@ -29,6 +29,62 @@ The intended deployment is one proxy per VM/container running an AI agent. All o
 - Method `*` matches any HTTP method
 - Example: `https://*.github.com/api/*` matches `https://foo.github.com/api/v1/repos`
 
+### Git Rules (planned)
+
+Git-specific rules provide a high-level way to control git smart HTTP operations (clone, fetch, push) without requiring users to understand the underlying protocol endpoints.
+
+A rule has **either** `method` (HTTP rule) **or** `git` (git rule), never both. Having both is a config validation error. `websocket = true` and `git` are mutually exclusive.
+
+```toml
+# Allow clone/fetch from any repo in myorg
+[[rules]]
+git = "fetch"
+url = "https://github.com/myorg/*"
+
+# Allow push only to a specific repo, only to feature branches
+[[rules]]
+git = "push"
+url = "https://github.com/myorg/deploy-tools"
+branches = ["feature/*", "fix/*"]
+
+# Allow all git operations to any github.com repo
+[[rules]]
+git = "*"
+url = "https://github.com/*"
+```
+
+#### `git` field values
+
+| Value   | Operations allowed   | Smart HTTP endpoints matched                          |
+|---------|---------------------|-------------------------------------------------------|
+| `fetch` | clone, fetch, pull  | `GET .../info/refs?service=git-upload-pack`, `POST .../git-upload-pack` |
+| `push`  | push                | `GET .../info/refs?service=git-receive-pack`, `POST .../git-receive-pack` |
+| `*`     | all                 | all four endpoints above                              |
+
+The `url` is the repo base URL (what you'd pass to `git clone`). The proxy appends the git smart HTTP suffixes internally.
+
+#### Branch restriction
+
+The optional `branches` field restricts which refs a push can target. It is only valid on `git = "push"` or `git = "*"` rules; using it with `git = "fetch"` is a config error.
+
+- Bare patterns like `feature/*` match against `refs/heads/feature/*`.
+- Patterns starting with `refs/` are matched literally (escape hatch for tags, notes, etc.).
+- Omitting `branches` means any ref is allowed.
+- If a push updates multiple refs and **any** ref is disallowed, the **entire push** is blocked.
+
+Branch restriction works by inspecting the pkt-line commands at the start of the `git-receive-pack` POST request body. These are plaintext lines before the binary pack data, so inspection is lightweight.
+
+#### Compilation
+
+A git rule is syntactic sugar. At rule compilation time, `git = "fetch", url = "https://github.com/org/*"` expands into internal matchers equivalent to:
+
+```
+GET  https://github.com/org/*/info/refs?service=git-upload-pack
+POST https://github.com/org/*/git-upload-pack
+```
+
+For push rules with `branches`, the URL matchers are the same but the `git-receive-pack` POST matcher additionally inspects the request body to extract ref names and check them against the branch patterns.
+
 ### Protocol Support
 - HTTP/1.1
 - HTTP/2
@@ -96,6 +152,16 @@ url = "https://*.github.com/*"
 method = "GET"
 url = "wss://realtime.example.com/socket"
 websocket = true
+
+# Git-specific rules (planned)
+[[rules]]
+git = "fetch"
+url = "https://github.com/myorg/*"
+
+[[rules]]
+git = "push"
+url = "https://github.com/myorg/agent-workspace"
+branches = ["feature/*", "fix/*"]
 ```
 
 ## Testing
