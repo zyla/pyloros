@@ -344,6 +344,43 @@ fn extract_label(msg: &str) -> &str {
     msg.split_once(": ").map(|(label, _)| label).unwrap_or(msg)
 }
 
+/// Unescape a Rust Debug-formatted string: strip surrounding `"`, replace `\n`→newline, etc.
+fn unescape_debug_string(s: &str) -> String {
+    let s = s.strip_prefix('"').unwrap_or(s);
+    let s = s.strip_suffix('"').unwrap_or(s);
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => result.push('\n'),
+                Some('t') => result.push('\t'),
+                Some('\\') => result.push('\\'),
+                Some('"') => result.push('"'),
+                Some('r') => result.push('\r'),
+                Some(other) => {
+                    result.push('\\');
+                    result.push(other);
+                }
+                None => result.push('\\'),
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+/// Render a command output step as a collapsible `<details>` block with a fenced code block.
+fn render_output_step(md: &mut String, label: &str, raw_text: &str) {
+    let text = unescape_debug_string(raw_text);
+    md.push_str("<details>\n<summary>");
+    md.push_str(label);
+    md.push_str("</summary>\n\n```\n");
+    md.push_str(text.trim_end());
+    md.push_str("\n```\n\n</details>\n\n");
+}
+
 /// Render a step line, using a collapsible `<details>` block for long lines.
 fn render_step(md: &mut String, prefix: &str, icon: &str, msg: &str) {
     let line = if icon.is_empty() {
@@ -363,7 +400,7 @@ fn render_step(md: &mut String, prefix: &str, icon: &str, msg: &str) {
             format!("{} {}", icon, label)
         };
         md.push_str(&format!(
-            "<details>\n<summary>{}</summary>\n\n{}\n\n</details>\n",
+            "<details>\n<summary>{}</summary>\n\n{}\n\n</details>\n\n",
             summary_text, msg
         ));
     }
@@ -456,6 +493,11 @@ fn generate_markdown(
                             render_step(&mut md, "", "\u{2705}", msg);
                         } else if let Some(msg) = step.strip_prefix("assert_fail: ") {
                             render_step(&mut md, "", "\u{274c}", msg);
+                        } else if let Some(rest) = step.strip_prefix("output ") {
+                            // Format: "output <label>: <debug-escaped-text>"
+                            if let Some((label, text)) = rest.split_once(": ") {
+                                render_output_step(&mut md, label, text);
+                            }
                         }
                     }
                     md.push('\n');

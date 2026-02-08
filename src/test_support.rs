@@ -31,6 +31,7 @@ enum Step {
     Action(String),
     AssertPass(String),
     AssertFail(String),
+    Output { label: String, text: String },
 }
 
 impl Step {
@@ -40,6 +41,7 @@ impl Step {
             Step::Action(msg) => format!("STEP action: {}", msg),
             Step::AssertPass(msg) => format!("STEP assert_pass: {}", msg),
             Step::AssertFail(msg) => format!("STEP assert_fail: {}", msg),
+            Step::Output { label, text } => format!("STEP output {}: {:?}", label, text),
         }
     }
 }
@@ -98,6 +100,14 @@ impl TestReport {
             .lock()
             .unwrap()
             .push(Step::Action(msg.to_string()));
+    }
+
+    #[allow(dead_code)]
+    pub fn output(&self, label: &str, text: &str) {
+        self.steps.lock().unwrap().push(Step::Output {
+            label: label.to_string(),
+            text: text.to_string(),
+        });
     }
 
     pub fn assert_eq<A, E>(&self, label: &str, actual: &A, expected: &E)
