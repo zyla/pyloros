@@ -1,4 +1,5 @@
 //! Test infrastructure for e2e proxy tests.
+// Each integration test is a separate crate, so not every test uses every item here.
 #![allow(dead_code)]
 
 use bytes::Bytes;
