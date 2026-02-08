@@ -4,7 +4,7 @@ A default-deny allowlist-based HTTPS filtering proxy for controlling AI agent ne
 
 ## Purpose of this document
 
-It is a declarative specification of what we want this product to be: features, technical choices (libraries, protocols, testing strategy), and configuration format. Code should ultimately be maintained to match the requirements here. When we want to change something in the product, we first modify the SPEC.
+It is a declarative specification of what we want this product to be: features, technical choices (libraries, protocols, testing strategy), configuration format, and developer experience (CI/CD, tooling, workflow). Code and infrastructure should ultimately be maintained to match the requirements here. When we want to change something, we first modify the SPEC.
 
 ## Deployment Model
 
@@ -136,6 +136,7 @@ Tests produce a human-readable report showing, for each test: what was done, wha
 - **Report generator**: `tools/test-report/` is a standalone Rust binary that runs `cargo test` with `TEST_REPORT_DIR` set, collects per-test report files, and generates `test-report.md` (Markdown) and `test-report.html` (HTML with embedded CSS).
 - **Convenience script**: `scripts/test-report.sh` builds and runs the report generator.
 - Output: Markdown + rendered HTML, available locally and as CI artifact.
+- The Markdown report is published to the GitHub Actions job summary so it's visible directly in the run without downloading artifacts.
 
 ## Documentation
 
