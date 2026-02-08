@@ -349,13 +349,13 @@ async fn test_binary_claude_code_through_proxy() {
     // Skip if running inside another claude session (nested claude -p hangs;
     // see devdocs/lessons/nested-claude-code-hangs.md)
     if std::env::var("CLAUDECODE").is_ok() {
-        eprintln!("running inside Claude Code session, skipping");
+        t.skip("running inside Claude Code session");
         return;
     }
 
     // Skip if `claude` not on PATH
     if Command::new("claude").arg("--version").output().is_err() {
-        eprintln!("claude CLI not found, skipping");
+        t.skip("claude CLI not found");
         return;
     }
 
@@ -363,7 +363,7 @@ async fn test_binary_claude_code_through_proxy() {
     let home = std::env::var("HOME").expect("HOME not set");
     let creds_path = std::path::PathBuf::from(&home).join(".claude/.credentials.json");
     if !creds_path.exists() {
-        eprintln!("claude not authenticated (~/.claude/.credentials.json missing), skipping");
+        t.skip("claude not authenticated (~/.claude/.credentials.json missing)");
         return;
     }
 
