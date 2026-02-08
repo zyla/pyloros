@@ -783,6 +783,34 @@ impl LogCapture {
 // run_command_reported — generic reported subprocess invocation
 // ---------------------------------------------------------------------------
 
+/// Shell-escape an argument for display in report action lines.
+/// Quotes the arg if it contains whitespace or special chars, and escapes control characters.
+fn shell_escape_arg(arg: &str) -> String {
+    let needs_quoting = arg.is_empty()
+        || arg
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || c == '"' || c == '\'');
+    if !needs_quoting {
+        return arg.to_string();
+    }
+    // Escape control characters and double quotes, then wrap in double quotes
+    let mut escaped = String::with_capacity(arg.len() + 2);
+    escaped.push('"');
+    for c in arg.chars() {
+        match c {
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            c if c.is_control() => escaped.push_str(&format!("\\x{:02x}", c as u32)),
+            c => escaped.push(c),
+        }
+    }
+    escaped.push('"');
+    escaped
+}
+
 /// Run a subprocess and report it as a test action.
 /// The action description is auto-generated from the command program name and arguments.
 pub fn run_command_reported(
@@ -796,7 +824,7 @@ pub fn run_command_reported(
         .into_owned();
     let args: Vec<_> = cmd
         .get_args()
-        .map(|a| a.to_string_lossy().into_owned())
+        .map(|a| shell_escape_arg(&a.to_string_lossy()))
         .collect();
     let desc = if args.is_empty() {
         format!("Run `{}`", program)
