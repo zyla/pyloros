@@ -35,16 +35,19 @@ if ! docker info >/dev/null 2>&1; then
     exit 0
 fi
 
-# Find the redlimitador binary (handles worktree where target/ is in the main repo)
+# Find the redlimitador binary: check PROJECT_DIR first, then the main git worktree
 BINARY=""
-for candidate in \
-    "$PROJECT_DIR/target/x86_64-unknown-linux-musl/release/redlimitador" \
-    "$PROJECT_DIR/target/release/redlimitador" \
-    "$PROJECT_DIR/target/debug/redlimitador"; do
-    if [[ -x "$candidate" ]]; then
-        BINARY="$candidate"
-        break
-    fi
+MAIN_WORKTREE="$(git -C "$PROJECT_DIR" worktree list --porcelain | head -1 | sed 's/^worktree //')"
+for search_dir in "$PROJECT_DIR" "$MAIN_WORKTREE"; do
+    for candidate in \
+        "$search_dir/target/x86_64-unknown-linux-musl/release/redlimitador" \
+        "$search_dir/target/release/redlimitador" \
+        "$search_dir/target/debug/redlimitador"; do
+        if [[ -x "$candidate" ]]; then
+            BINARY="$candidate"
+            break 2
+        fi
+    done
 done
 if [[ -z "$BINARY" ]]; then
     echo "Cannot find redlimitador binary. Run 'cargo build' first."

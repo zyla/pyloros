@@ -13,6 +13,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Defaults
 CONFIG=""
 BINARY=""
+PROXY_IMAGE=""
 CA_DIR=""
 KEEP=false
 PREFIX="rl-sandbox-$$"
@@ -29,7 +30,10 @@ all traffic must go through the proxy's allowlist rules.
 
 Options:
   --config FILE    Proxy config file with rules (required)
-  --binary PATH    Path to redlimitador binary (auto-detected from target/)
+  --image IMAGE    Docker image to use for the proxy
+                   (default: ghcr.io/zyla/redlimitador:latest)
+  --binary PATH    Path to redlimitador binary (builds a local Docker
+                   image from the binary using the project Dockerfile)
   --ca-dir DIR     Use existing CA certs from this directory (default: auto-generate)
   --keep           Don't clean up containers/networks on exit (for debugging)
   -h, --help       Show this help message
@@ -43,11 +47,14 @@ The sandbox is on the internal network only (no direct internet).
 The proxy bridges both networks, forwarding allowed requests.
 
 Examples:
-  # Interactive shell with proxy-only access
+  # Interactive shell with proxy-only access (uses published image)
   scripts/docker-sandbox.sh --config config.toml alpine:latest sh
 
-  # Run a specific command
-  scripts/docker-sandbox.sh --config config.toml python:3.12 pip install requests
+  # Use a local binary (builds a temporary Docker image)
+  scripts/docker-sandbox.sh --config config.toml --binary target/release/redlimitador alpine:latest sh
+
+  # Use a specific image
+  scripts/docker-sandbox.sh --config config.toml --image my-proxy:dev alpine:latest sh
 EOF
     exit 0
 }
@@ -69,6 +76,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --binary)
             BINARY="$2"
+            shift 2
+            ;;
+        --image)
+            PROXY_IMAGE="$2"
             shift 2
             ;;
         --ca-dir)
@@ -107,39 +118,43 @@ CONFIG="$(cd "$(dirname "$CONFIG")" && pwd)/$(basename "$CONFIG")"
 IMAGE="${POSITIONAL[0]}"
 COMMAND=("${POSITIONAL[@]:1}")
 
+# --binary and --image are mutually exclusive
+if [[ -n "$BINARY" ]] && [[ -n "$PROXY_IMAGE" ]]; then
+    die "--binary and --image are mutually exclusive"
+fi
+
 # Check Docker is available
 docker info >/dev/null 2>&1 || die "Docker is not running or not accessible"
 
-# Auto-detect binary
-if [[ -z "$BINARY" ]]; then
-    for _candidate in \
-        "$PROJECT_DIR/target/x86_64-unknown-linux-musl/release/redlimitador" \
-        "$PROJECT_DIR/target/release/redlimitador" \
-        "$PROJECT_DIR/target/debug/redlimitador"; do
-        if [[ -x "$_candidate" ]]; then
-            BINARY="$_candidate"
-            break
-        fi
-    done
-    if [[ -z "$BINARY" ]]; then
-        die "Cannot find redlimitador binary. Build with 'cargo build' or specify --binary"
-    fi
-    # Warn if using a glibc binary (non-musl)
-    if [[ "$BINARY" != *"musl"* ]]; then
-        log "Note: Using glibc binary ($BINARY)."
-        log "  For best container compatibility, build with: cargo build --release --target x86_64-unknown-linux-musl"
-    fi
+# Determine proxy image
+BUILT_LOCAL_IMAGE=false
+if [[ -n "$BINARY" ]]; then
+    # Build a local Docker image from the binary
+    [[ -x "$BINARY" ]] || die "Binary is not executable: $BINARY"
+    BINARY="$(cd "$(dirname "$BINARY")" && pwd)/$(basename "$BINARY")"
+    PROXY_IMAGE="rl-sandbox-proxy-$$"
+    log "Building local proxy image from $BINARY..."
+    cp "$BINARY" "$PROJECT_DIR/redlimitador"
+    docker build -t "$PROXY_IMAGE" -f "$PROJECT_DIR/Dockerfile" "$PROJECT_DIR" >/dev/null
+    rm -f "$PROJECT_DIR/redlimitador"
+    BUILT_LOCAL_IMAGE=true
+elif [[ -z "$PROXY_IMAGE" ]]; then
+    # Default to published image
+    PROXY_IMAGE="ghcr.io/zyla/redlimitador:latest"
 fi
-[[ -x "$BINARY" ]] || die "Binary is not executable: $BINARY"
-BINARY="$(cd "$(dirname "$BINARY")" && pwd)/$(basename "$BINARY")"
 
-# CA cert handling
+# CA cert handling — when using --binary, the binary can generate certs directly
 OWN_CA_DIR=false
 if [[ -z "$CA_DIR" ]]; then
     CA_DIR="$(mktemp -d)"
     OWN_CA_DIR=true
     log "Generating CA certificate..."
-    "$BINARY" generate-ca --out "$CA_DIR" >/dev/null
+    if [[ -n "$BINARY" ]]; then
+        "$BINARY" generate-ca --out "$CA_DIR" >/dev/null
+    else
+        # Run generate-ca from the proxy image
+        docker run --rm -v "$CA_DIR:/out" "$PROXY_IMAGE" generate-ca --out /out >/dev/null
+    fi
 fi
 [[ -f "$CA_DIR/ca.crt" ]] || die "CA certificate not found: $CA_DIR/ca.crt"
 [[ -f "$CA_DIR/ca.key" ]] || die "CA private key not found: $CA_DIR/ca.key"
@@ -167,6 +182,9 @@ cleanup() {
     if [[ "$OWN_CA_DIR" == true ]]; then
         rm -rf "$CA_DIR"
     fi
+    if [[ "$BUILT_LOCAL_IMAGE" == true ]]; then
+        docker rmi "$PROXY_IMAGE" >/dev/null 2>&1 || true
+    fi
     exit "$exit_code"
 }
 trap cleanup EXIT
@@ -181,12 +199,11 @@ log "Starting proxy container..."
 docker run -d \
     --name "$CTR_PROXY" \
     --network "$NET_EXTERNAL" \
-    -v "$BINARY:/usr/local/bin/redlimitador:ro" \
     -v "$CONFIG:/etc/redlimitador/config.toml:ro" \
     -v "$CA_DIR/ca.crt:/etc/redlimitador/ca.crt:ro" \
     -v "$CA_DIR/ca.key:/etc/redlimitador/ca.key:ro" \
-    ubuntu:24.04 \
-    /usr/local/bin/redlimitador run \
+    "$PROXY_IMAGE" \
+    run \
         --config /etc/redlimitador/config.toml \
         --ca-cert /etc/redlimitador/ca.crt \
         --ca-key /etc/redlimitador/ca.key \
