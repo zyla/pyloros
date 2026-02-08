@@ -12,6 +12,4 @@ Not in SPEC because too vaguely worded.
   - Heavy feature: disk I/O, extra network round-trips, git subprocess management — should be gated behind explicit config
   - Build separately from branch-level git rules (which are lightweight pkt-line inspection)
 
-- Credential masking
-  - rewrite Authorization and other headers so that agent can be exposed only to fake credentials while proxy has real ones
-  - supports various services (anthropic, github, openai etc.)
+- ~~Credential masking~~ → Implemented as "Credential Injection" in SPEC.md
