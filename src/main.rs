@@ -224,6 +224,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "  Log blocked requests: {}",
                 cfg.logging.log_blocked_requests
             );
+            if let (Some(username), Some(password)) =
+                (&cfg.proxy.auth_username, &cfg.proxy.auth_password)
+            {
+                println!("  Authentication: enabled (username: {})", username);
+                // Try resolving password to catch env var issues early
+                pyloros::config::resolve_credential_value(password)?;
+            } else {
+                println!("  Authentication: disabled");
+            }
             println!("  Rules: {}", cfg.rules.len());
 
             if !cfg.rules.is_empty() {

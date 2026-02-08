@@ -8,14 +8,17 @@ use hyper_util::rt::TokioIo;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 
-use super::response::{blocked_response, error_response};
+use super::response::{auth_required_response, blocked_response, error_response};
 use super::tunnel::TunnelHandler;
 use crate::filter::{FilterEngine, FilterResult, RequestInfo};
+
+use base64::Engine;
 
 /// Main proxy request handler
 pub struct ProxyHandler {
     tunnel_handler: Arc<TunnelHandler>,
     filter_engine: Arc<FilterEngine>,
+    auth: Option<(String, String)>,
     log_allowed_requests: bool,
     log_blocked_requests: bool,
 }
@@ -25,6 +28,7 @@ impl ProxyHandler {
         Self {
             tunnel_handler,
             filter_engine,
+            auth: None,
             log_allowed_requests: true,
             log_blocked_requests: true,
         }
@@ -36,11 +40,63 @@ impl ProxyHandler {
         self
     }
 
+    pub fn with_auth(mut self, auth: Option<(String, String)>) -> Self {
+        self.auth = auth;
+        self
+    }
+
+    /// Check the Proxy-Authorization header against configured credentials.
+    /// Returns true if auth is not configured or if credentials match.
+    fn check_auth(&self, req: &Request<Incoming>) -> bool {
+        let (expected_user, expected_pass) = match &self.auth {
+            Some(creds) => creds,
+            None => return true,
+        };
+
+        let header_value = match req.headers().get("proxy-authorization") {
+            Some(v) => v,
+            None => return false,
+        };
+
+        let header_str = match header_value.to_str() {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+
+        let encoded = match header_str.strip_prefix("Basic ") {
+            Some(e) => e,
+            None => return false,
+        };
+
+        let decoded = match base64::engine::general_purpose::STANDARD.decode(encoded) {
+            Ok(d) => d,
+            Err(_) => return false,
+        };
+
+        let decoded_str = match std::str::from_utf8(&decoded) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+
+        let (user, pass) = match decoded_str.split_once(':') {
+            Some(pair) => pair,
+            None => return false,
+        };
+
+        user == expected_user && pass == expected_pass
+    }
+
     /// Handle an incoming proxy request
     pub async fn handle(
         self,
         req: Request<Incoming>,
     ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+        // Check proxy authentication before processing any request
+        if !self.check_auth(&req) {
+            tracing::warn!("Proxy authentication failed");
+            return Ok(auth_required_response());
+        }
+
         // Handle CONNECT requests (HTTPS tunneling)
         if req.method() == Method::CONNECT {
             return self.handle_connect(req).await;

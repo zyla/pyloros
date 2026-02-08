@@ -15,14 +15,21 @@ use wiremock::{matchers::any, Mock, MockServer, ResponseTemplate};
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Generate a TOML config string for the binary.
-fn build_config_toml(
+/// Generate a TOML config string with optional auth.
+fn build_config_toml_with_auth(
     ca_cert: &str,
     ca_key: &str,
     upstream_override_port: u16,
     upstream_tls_ca: &str,
     rules: &[(&str, &str)],
+    auth: Option<(&str, &str)>,
 ) -> String {
+    let auth_section = if let Some((user, pass)) = auth {
+        format!("auth_username = \"{user}\"\nauth_password = \"{pass}\"\n")
+    } else {
+        String::new()
+    };
+
     let mut toml = format!(
         r#"[proxy]
 bind_address = "127.0.0.1:0"
@@ -30,7 +37,7 @@ ca_cert = "{ca_cert}"
 ca_key = "{ca_key}"
 upstream_override_port = {upstream_override_port}
 upstream_tls_ca = "{upstream_tls_ca}"
-
+{auth_section}
 [logging]
 level = "info"
 log_requests = true
@@ -176,9 +183,18 @@ fn parse_listening_port(line: &str) -> Option<u16> {
     addr_str[colon + 1..].parse().ok()
 }
 
-/// Build a curl command configured to go through the proxy.
-fn build_curl_command(proxy_port: u16, url: &str, ca_cert_path: &str) -> Command {
-    let proxy_url = format!("http://127.0.0.1:{}", proxy_port);
+/// Build a curl command with optional proxy auth credentials.
+fn build_curl_command_with_auth(
+    proxy_port: u16,
+    url: &str,
+    ca_cert_path: &str,
+    auth: Option<(&str, &str)>,
+) -> Command {
+    let proxy_url = if let Some((user, pass)) = auth {
+        format!("http://{}:{}@127.0.0.1:{}", user, pass, proxy_port)
+    } else {
+        format!("http://127.0.0.1:{}", proxy_port)
+    };
     let mut cmd = Command::new("curl");
     cmd.env("HTTPS_PROXY", &proxy_url).args([
         "-s",
@@ -199,7 +215,20 @@ fn build_curl_command(proxy_port: u16, url: &str, ca_cert_path: &str) -> Command
 /// for http:// URLs as a CGI security measure). Sets `no_proxy=""` because curl
 /// skips the proxy for localhost by default.
 fn build_curl_plain_http_command(proxy_port: u16, url: &str) -> Command {
-    let proxy_url = format!("http://127.0.0.1:{}", proxy_port);
+    build_curl_plain_http_command_with_auth(proxy_port, url, None)
+}
+
+/// Build a plain HTTP curl command with optional proxy auth.
+fn build_curl_plain_http_command_with_auth(
+    proxy_port: u16,
+    url: &str,
+    auth: Option<(&str, &str)>,
+) -> Command {
+    let proxy_url = if let Some((user, pass)) = auth {
+        format!("http://{}:{}@127.0.0.1:{}", user, pass, proxy_port)
+    } else {
+        format!("http://127.0.0.1:{}", proxy_port)
+    };
     let mut cmd = Command::new("curl");
     cmd.env("http_proxy", &proxy_url).env("no_proxy", "").args([
         "-s",
@@ -238,10 +267,10 @@ fn parse_curl_output(output: &std::process::Output) -> (u16, String, String) {
 // Tests
 // ---------------------------------------------------------------------------
 
-/// Spawn the binary, curl an allowed HTTPS request, verify 200 + body.
+/// Spawn the binary with auth, curl an allowed HTTPS request, verify 200 + body.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_binary_allowed_get_returns_200() {
-    let t = test_report!("Binary: allowed HTTPS GET returns 200");
+    let t = test_report!("Binary: allowed HTTPS GET returns 200 (with auth)");
 
     let ca = TestCa::generate();
     let upstream = TestUpstream::start_reported(
@@ -254,12 +283,13 @@ async fn test_binary_allowed_get_returns_200() {
 
     let tmp = TempDir::new().unwrap();
     let config_path = tmp.path().join("config.toml");
-    let config_toml = build_config_toml(
+    let config_toml = build_config_toml_with_auth(
         &ca.cert_path,
         &ca.key_path,
         upstream.port(),
         &ca.cert_path,
         &[("GET", "https://localhost/*")],
+        Some(("testuser", "testpass")),
     );
     std::fs::write(&config_path, &config_toml).unwrap();
 
@@ -267,7 +297,12 @@ async fn test_binary_allowed_get_returns_200() {
 
     let output = common::run_command_reported(
         &t,
-        &mut build_curl_command(proxy_port, "https://localhost/test", &ca.cert_path),
+        &mut build_curl_command_with_auth(
+            proxy_port,
+            "https://localhost/test",
+            &ca.cert_path,
+            Some(("testuser", "testpass")),
+        ),
     );
     let (status, body, _stderr) = parse_curl_output(&output);
 
@@ -279,10 +314,10 @@ async fn test_binary_allowed_get_returns_200() {
     upstream.shutdown();
 }
 
-/// Spawn the binary, curl a blocked HTTPS request, verify 451.
+/// Spawn the binary with auth, curl a blocked HTTPS request, verify 451.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_binary_blocked_request_returns_451() {
-    let t = test_report!("Binary: blocked HTTPS request returns 451");
+    let t = test_report!("Binary: blocked HTTPS request returns 451 (with auth)");
 
     let ca = TestCa::generate();
     let upstream = TestUpstream::start_reported(
@@ -296,12 +331,13 @@ async fn test_binary_blocked_request_returns_451() {
     let tmp = TempDir::new().unwrap();
     let config_path = tmp.path().join("config.toml");
     // Rule only allows example.com, not localhost
-    let config_toml = build_config_toml(
+    let config_toml = build_config_toml_with_auth(
         &ca.cert_path,
         &ca.key_path,
         upstream.port(),
         &ca.cert_path,
         &[("GET", "https://example.com/*")],
+        Some(("testuser", "testpass")),
     );
     std::fs::write(&config_path, &config_toml).unwrap();
 
@@ -309,7 +345,12 @@ async fn test_binary_blocked_request_returns_451() {
 
     let output = common::run_command_reported(
         &t,
-        &mut build_curl_command(proxy_port, "https://localhost/test", &ca.cert_path),
+        &mut build_curl_command_with_auth(
+            proxy_port,
+            "https://localhost/test",
+            &ca.cert_path,
+            Some(("testuser", "testpass")),
+        ),
     );
     let (status, _body, _stderr) = parse_curl_output(&output);
 
@@ -320,10 +361,10 @@ async fn test_binary_blocked_request_returns_451() {
     upstream.shutdown();
 }
 
-/// Spawn the binary, curl an allowed plain HTTP request, verify 200 + body.
+/// Spawn the binary with auth, curl an allowed plain HTTP request, verify 200 + body.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_binary_plain_http_allowed_get_returns_200() {
-    let t = test_report!("Binary: allowed plain HTTP GET returns 200");
+    let t = test_report!("Binary: allowed plain HTTP GET returns 200 (with auth)");
 
     let upstream = MockServer::start().await;
     t.setup("MockServer returning 200 'hello plain binary'");
@@ -337,20 +378,27 @@ async fn test_binary_plain_http_allowed_get_returns_200() {
     let ca = TestCa::generate();
     let tmp = TempDir::new().unwrap();
     let config_path = tmp.path().join("config.toml");
-    let config_toml = build_config_toml(
+    let config_toml = build_config_toml_with_auth(
         &ca.cert_path,
         &ca.key_path,
         upstream_port,
         &ca.cert_path,
         &[("GET", "http://localhost/*")],
+        Some(("testuser", "testpass")),
     );
     std::fs::write(&config_path, &config_toml).unwrap();
 
     let (mut child, proxy_port, proxy_logs) = spawn_proxy_with_logs_reported(&t, &config_path);
 
     let url = format!("http://localhost:{}/test", upstream_port);
-    let output =
-        common::run_command_reported(&t, &mut build_curl_plain_http_command(proxy_port, &url));
+    let output = common::run_command_reported(
+        &t,
+        &mut build_curl_plain_http_command_with_auth(
+            proxy_port,
+            &url,
+            Some(("testuser", "testpass")),
+        ),
+    );
     let (status, body, _stderr) = parse_curl_output(&output);
 
     t.assert_eq("Response status", &status, &200u16);
@@ -460,7 +508,7 @@ async fn test_binary_claude_code_through_proxy() {
 
     let (mut child, proxy_port, proxy_logs) = spawn_proxy_with_logs_reported(&t, &config_path);
 
-    t.action("Run `claude -p 'Say hi'` through proxy");
+    t.action("Run `claude -p 'Say hi'` through proxy (no auth — backward compat)");
     let proxy_url = format!("http://127.0.0.1:{}", proxy_port);
     let mut claude_child = Command::new("claude")
         .args([
@@ -559,6 +607,47 @@ async fn test_binary_claude_code_through_proxy() {
     }
 
     eprintln!("claude response: {}", stdout.trim());
+
+    child.kill().ok();
+    child.wait().ok();
+}
+
+/// Spawn the binary with auth, curl WITHOUT credentials via plain HTTP, verify 407.
+/// Uses plain HTTP because curl can't report HTTPS CONNECT 407 as an HTTP status.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_binary_auth_required_without_credentials() {
+    let t = test_report!("Binary: auth required without credentials returns 407");
+
+    let upstream = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(200).set_body_string("should not reach"))
+        .mount(&upstream)
+        .await;
+
+    let upstream_port = upstream.address().port();
+
+    let ca = TestCa::generate();
+    let tmp = TempDir::new().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    let config_toml = build_config_toml_with_auth(
+        &ca.cert_path,
+        &ca.key_path,
+        upstream_port,
+        &ca.cert_path,
+        &[("GET", "http://localhost/*")],
+        Some(("testuser", "testpass")),
+    );
+    std::fs::write(&config_path, &config_toml).unwrap();
+
+    let (mut child, proxy_port) = spawn_proxy_reported(&t, &config_path);
+
+    // curl without proxy auth — should get 407
+    let url = format!("http://localhost:{}/test", upstream_port);
+    let output =
+        common::run_command_reported(&t, &mut build_curl_plain_http_command(proxy_port, &url));
+    let (status, _body, _stderr) = parse_curl_output(&output);
+
+    t.assert_eq("Response status", &status, &407u16);
 
     child.kill().ok();
     child.wait().ok();

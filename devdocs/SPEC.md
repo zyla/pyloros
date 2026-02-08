@@ -109,6 +109,27 @@ subcommands:
 - Separate control over logging of allowed and blocked requests (e.g., log only blocked to reduce noise, or only allowed for auditing)
 - Error messages for failed upstream requests must include the request method and URL for diagnostics
 
+### Proxy Authentication
+
+The proxy can require clients to authenticate before processing any requests. This prevents unauthorized network entities from using the proxy's credential injection and URL allowlisting capabilities — critical when the proxy is reachable over a network (e.g. Docker internal networks where other containers could connect).
+
+- Authentication uses the HTTP Basic scheme via the `Proxy-Authorization` header (RFC 7235)
+- When enabled, unauthenticated or incorrectly authenticated requests receive HTTP `407 Proxy Authentication Required` with a `Proxy-Authenticate: Basic realm="redlimitador"` header
+- For CONNECT tunnels, authentication is checked on the CONNECT request before the tunnel is established
+- For plain HTTP proxy requests, authentication is checked on each request
+- Configured via `auth_username` and `auth_password` fields in `[proxy]` — both must be present, or both absent
+- `auth_password` supports `${ENV_VAR}` placeholders, resolved at startup (same mechanism as credential injection values)
+- When auth is not configured, the proxy accepts all connections (backward compatible)
+- Failed auth attempts are logged at warn level (client IP, username if provided) but never log the submitted password
+- The `validate-config` command reports whether auth is enabled (never prints the password)
+
+**Client configuration:** Most HTTP clients support proxy auth via embedded credentials in the proxy URL:
+```
+HTTP_PROXY=http://agent:secretpass@proxy:8080
+HTTPS_PROXY=http://agent:secretpass@proxy:8080
+```
+This works with curl, git, npm, pip, and Docker — no client-side code changes needed.
+
 ### Credential Injection
 The proxy can inject credentials (API keys, tokens) into outgoing requests so the agent never sees real secrets, preventing credential exfiltration.
 
@@ -161,6 +182,9 @@ Re-signs requests with real AWS credentials using AWS Signature Version 4. This 
 bind_address = "127.0.0.1:8080"
 ca_cert = "/path/to/ca.crt"
 ca_key = "/path/to/ca.key"
+# Optional: require proxy authentication (both fields required if either is set)
+# auth_username = "agent"
+# auth_password = "${PROXY_PASSWORD}"
 # Optional: override upstream port for all CONNECT forwards (testing only)
 # upstream_override_port = 9443
 # Optional: PEM CA cert to trust for upstream TLS (testing only)
@@ -239,6 +263,11 @@ mechanism real clients use. Tests prefer environment variables over curl CLI fla
 end-to-end behavior including config parsing, CLI argument handling, and process
 lifecycle.
 
+Binary tests should enable proxy authentication to mirror realistic deployment
+configurations. Proxy credentials are passed via embedded credentials in the proxy
+URL (e.g. `http://user:pass@127.0.0.1:PORT`), the same way real clients configure
+them.
+
 ### Live API Tests
 
 Binary-level tests that send real requests to external APIs (e.g. `api.anthropic.com`) through the proxy, verifying the full MITM TLS pipeline against production servers. These tests require the `claude` CLI to be installed and authenticated, and are skipped when either is unavailable (e.g. in CI).
@@ -260,6 +289,7 @@ Test coverage includes:
 - Branch-level restriction: `branches` patterns allow/block pushes to specific refs (`git_rules_test.rs`)
 - Pkt-line parser unit tests: ref extraction, capabilities handling, branch matching (`pktline.rs`)
 - Git-LFS: LFS batch endpoint filtering by operation type, plain HTTP blocking, merged-scan for combined fetch+push rules (`git_lfs_test.rs`)
+- Proxy authentication: correct credentials accepted, wrong/missing credentials get 407, auth disabled works without credentials (`proxy_auth_test.rs`)
 
 ### Test Report Generation
 
@@ -298,12 +328,18 @@ routed exclusively through the pyloros proxy using Docker internal networks. The
 container is placed on an `--internal` Docker network with no direct internet access; the proxy
 container bridges the internal and external networks, forwarding only allowed requests.
 
+When proxy authentication is enabled, the sandbox script passes the proxy URL with embedded
+credentials to the workload container via environment variables.
+
 ### Docker Compose Example
 
 A Docker Compose example (`examples/docker-compose/`) provides a declarative alternative to the
 imperative sandbox script, with the same two-network architecture (external bridge + internal
 isolated). A test script (`scripts/test-docker-compose.sh`) verifies allowed/blocked behavior and
 network isolation.
+
+When proxy authentication is enabled, the compose file passes the proxy secret to the workload
+container via Docker Compose environment variables or secrets.
 
 ## Documentation
 

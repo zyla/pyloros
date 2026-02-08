@@ -129,6 +129,14 @@ pub struct ProxyConfig {
     /// Path to CA private key for MITM
     pub ca_key: Option<String>,
 
+    /// Username for proxy authentication (HTTP Basic)
+    #[serde(default)]
+    pub auth_username: Option<String>,
+
+    /// Password for proxy authentication (supports `${ENV_VAR}` placeholders)
+    #[serde(default)]
+    pub auth_password: Option<String>,
+
     /// Override upstream port for all CONNECT forwards (testing only)
     #[serde(default)]
     pub upstream_override_port: Option<u16>,
@@ -144,6 +152,8 @@ impl Default for ProxyConfig {
             bind_address: default_bind_address(),
             ca_cert: None,
             ca_key: None,
+            auth_username: None,
+            auth_password: None,
             upstream_override_port: None,
             upstream_tls_ca: None,
         }
@@ -278,6 +288,9 @@ impl Config {
             Self::validate_credential(i, cred)?;
         }
 
+        // Validate auth config
+        config.validate_auth()?;
+
         Ok(config)
     }
 
@@ -357,6 +370,33 @@ impl Config {
         Ok(())
     }
 
+    /// Validate proxy authentication config: both fields must be set or both absent.
+    fn validate_auth(&self) -> Result<()> {
+        match (&self.proxy.auth_username, &self.proxy.auth_password) {
+            (Some(_), None) => Err(Error::config(
+                "auth_username is set but auth_password is missing",
+            )),
+            (None, Some(_)) => Err(Error::config(
+                "auth_password is set but auth_username is missing",
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    /// Resolve proxy authentication credentials.
+    ///
+    /// Returns `None` if auth is not configured.
+    /// Resolves `${ENV_VAR}` placeholders in `auth_password`.
+    pub fn resolved_auth(&self) -> Result<Option<(String, String)>> {
+        match (&self.proxy.auth_username, &self.proxy.auth_password) {
+            (Some(username), Some(password)) => {
+                let resolved_password = resolve_credential_value(password)?;
+                Ok(Some((username.clone(), resolved_password)))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// Create a minimal configuration with just the essentials
     pub fn minimal(bind_address: String, ca_cert: String, ca_key: String) -> Self {
         Self {
@@ -364,6 +404,8 @@ impl Config {
                 bind_address,
                 ca_cert: Some(ca_cert),
                 ca_key: Some(ca_key),
+                auth_username: None,
+                auth_password: None,
                 upstream_override_port: None,
                 upstream_tls_ca: None,
             },
@@ -1012,5 +1054,96 @@ access_key_id = "AKID"
         let t = test_report!("Plain literal with no placeholders passes through");
         let result = resolve_credential_value("just-a-literal").unwrap();
         t.assert_eq("passthrough", &result.as_str(), &"just-a-literal");
+    }
+
+    // --- Proxy auth config tests ---
+
+    #[test]
+    fn test_parse_auth_config() {
+        let t = test_report!("Parse config with auth fields");
+        let toml = r#"
+[proxy]
+bind_address = "127.0.0.1:8080"
+auth_username = "admin"
+auth_password = "secret"
+"#;
+        let config = Config::parse(toml).unwrap();
+        t.assert_eq(
+            "auth_username",
+            &config.proxy.auth_username,
+            &Some("admin".to_string()),
+        );
+        t.assert_eq(
+            "auth_password",
+            &config.proxy.auth_password,
+            &Some("secret".to_string()),
+        );
+    }
+
+    #[test]
+    fn test_parse_auth_config_only_username() {
+        let t = test_report!("Reject config with only auth_username");
+        let toml = r#"
+[proxy]
+auth_username = "admin"
+"#;
+        let result = Config::parse(toml);
+        t.assert_true("parse error", result.is_err());
+        let err = result.unwrap_err().to_string();
+        t.assert_contains("error mentions auth_password", &err, "auth_password");
+    }
+
+    #[test]
+    fn test_parse_auth_config_only_password() {
+        let t = test_report!("Reject config with only auth_password");
+        let toml = r#"
+[proxy]
+auth_password = "secret"
+"#;
+        let result = Config::parse(toml);
+        t.assert_true("parse error", result.is_err());
+        let err = result.unwrap_err().to_string();
+        t.assert_contains("error mentions auth_username", &err, "auth_username");
+    }
+
+    #[test]
+    fn test_parse_auth_config_none() {
+        let t = test_report!("Config without auth fields works (backward compat)");
+        let config = Config::parse("").unwrap();
+        t.assert_true(
+            "auth_username is None",
+            config.proxy.auth_username.is_none(),
+        );
+        t.assert_true(
+            "auth_password is None",
+            config.proxy.auth_password.is_none(),
+        );
+    }
+
+    #[test]
+    fn test_resolved_auth_env_var() {
+        let t = test_report!("resolved_auth resolves ${ENV_VAR} in password");
+        std::env::set_var("TEST_PROXY_AUTH_PW_123", "resolved-pw");
+        let toml = r#"
+[proxy]
+auth_username = "user1"
+auth_password = "${TEST_PROXY_AUTH_PW_123}"
+"#;
+        let config = Config::parse(toml).unwrap();
+        let auth = config.resolved_auth().unwrap();
+        t.assert_eq(
+            "resolved auth",
+            &auth,
+            &Some(("user1".to_string(), "resolved-pw".to_string())),
+        );
+        std::env::remove_var("TEST_PROXY_AUTH_PW_123");
+    }
+
+    #[test]
+    fn test_resolved_auth_none() {
+        let t = test_report!("resolved_auth returns None when not configured");
+        let config = Config::parse("").unwrap();
+        let auth = config.resolved_auth().unwrap();
+        t.assert_eq("no auth", &auth, &None);
     }
 }

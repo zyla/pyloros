@@ -64,6 +64,20 @@ pub fn git_blocked_push_response(
         .unwrap()
 }
 
+/// Create an HTTP 407 Proxy Authentication Required response
+pub fn auth_required_response() -> Response<BoxBody<Bytes, hyper::Error>> {
+    Response::builder()
+        .status(StatusCode::PROXY_AUTHENTICATION_REQUIRED)
+        .header("Proxy-Authenticate", "Basic realm=\"pyloros\"")
+        .header("Content-Type", "text/plain")
+        .body(
+            Full::new(Bytes::from("Proxy authentication required\n"))
+                .map_err(|e| match e {})
+                .boxed(),
+        )
+        .unwrap()
+}
+
 /// Create an HTTP 502 Bad Gateway error response
 pub fn error_response(message: &str) -> Response<BoxBody<Bytes, hyper::Error>> {
     let body = format!("Proxy error: {}\n", message);
@@ -88,6 +102,27 @@ mod tests {
             "Status",
             &resp.status(),
             &StatusCode::UNAVAILABLE_FOR_LEGAL_REASONS,
+        );
+    }
+
+    #[test]
+    fn test_auth_required_response() {
+        let t = test_report!("Auth required response returns 407");
+        let resp = auth_required_response();
+        t.assert_eq(
+            "Status",
+            &resp.status(),
+            &StatusCode::PROXY_AUTHENTICATION_REQUIRED,
+        );
+        t.assert_eq(
+            "Proxy-Authenticate header",
+            &resp
+                .headers()
+                .get("Proxy-Authenticate")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            &"Basic realm=\"pyloros\"",
         );
     }
 
