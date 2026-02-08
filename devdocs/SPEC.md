@@ -4,7 +4,7 @@ A default-deny allowlist-based HTTPS filtering proxy for controlling AI agent ne
 
 ## Purpose of this document
 
-It is a declarative specification of what we want this product to be: features, technical choices (libraries, protocols, testing strategy), configuration format, and developer experience (CI/CD, tooling, workflow). Code and infrastructure should ultimately be maintained to match the requirements here. When we want to change something, we first modify the SPEC.
+It is a declarative specification of what we want this product to be: features, behavior, technical choices (libraries, protocols), configuration format, and developer experience (CI/CD, tooling, workflow). It describes *what* and *why*, not *how* — implementation details like internal APIs, struct names, or macro usage belong in code and code comments, not here. Code and infrastructure should ultimately be maintained to match the requirements here. When we want to change something, we first modify the SPEC.
 
 ## Deployment Model
 
@@ -128,15 +128,11 @@ Binary-level smoke tests spawn the actual `redlimitador` binary and drive it wit
 
 ### Test Report Generation
 
-Tests produce a human-readable report showing, for each test: what was done, what the result was, and what assertions were checked. The report is generated from **actual test execution** using reporting wrappers that auto-generate descriptions from real parameters (URLs, rules, CLI args), making drift impossible.
+Tests produce a human-readable report showing, for each test: what was done, what the result was, and what assertions were checked. The report is tightly coupled to actual test execution — descriptions are derived from real parameters (URLs, rules, CLI args), making drift between tests and report impossible.
 
-- **TestReport**: Each test creates a `TestReport` via the `test_report!()` macro. It records setup steps, actions, and assertion results. On drop, it writes a structured report file to `$TEST_REPORT_DIR/`.
-- **ReportingClient**: Wraps `reqwest::Client` and auto-logs HTTP actions (e.g., `GET https://localhost/test`) from the actual request parameters.
-- **TestProxy/TestUpstream**: Accept `&TestReport` and auto-log setup from actual config (rules, handler description).
-- **Report generator**: `tools/test-report/` is a standalone Rust binary that runs `cargo test` with `TEST_REPORT_DIR` set, collects per-test report files, and generates `test-report.md` (Markdown) and `test-report.html` (HTML with embedded CSS).
-- **Convenience script**: `scripts/test-report.sh` builds and runs the report generator.
-- Output: Markdown + rendered HTML, available locally and as CI artifact.
+- A standalone report generator tool (`tools/test-report/`) runs the test suite and produces Markdown + HTML output.
 - The Markdown report is published to the GitHub Actions job summary so it's visible directly in the run without downloading artifacts.
+- Reports are also uploaded as CI artifacts.
 
 ## Documentation
 
