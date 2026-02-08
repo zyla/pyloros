@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
-    branches: [main, claude/release-workflow]
+    branches: [main]
 
 permissions:
   contents: write
@@ -76,7 +76,7 @@ jobs:
 
   latest:
     name: Latest Build
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/claude/release-workflow'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
