@@ -203,9 +203,12 @@ impl TunnelHandler {
                     return Ok(git_blocked_push_response(&body_bytes, &blocked));
                 }
 
-                // Inject credentials
-                self.credential_engine
-                    .inject(&request_info, &mut parts.headers);
+                // Inject credentials (body already buffered)
+                self.credential_engine.inject_with_body(
+                    &request_info,
+                    &mut parts.headers,
+                    &body_bytes,
+                );
 
                 // Forward with the buffered body
                 let connect_port = self.upstream_port_override.unwrap_or(port);
@@ -335,6 +338,34 @@ impl TunnelHandler {
                 self.upstream_tls_config.clone(),
             )
             .await
+        } else if self.credential_engine.needs_body(&request_info) {
+            // SigV4 credentials need the full body for signing
+            let (mut parts, body) = req.into_parts();
+            let body_bytes = body
+                .collect()
+                .await
+                .map_err(|e| {
+                    tracing::error!(error = %e, "Failed to buffer request body for SigV4 signing");
+                    e
+                })?
+                .to_bytes();
+            self.credential_engine
+                .inject_with_body(&request_info, &mut parts.headers, &body_bytes);
+            let full_body = Full::new(body_bytes).map_err(|e| match e {}).boxed();
+            let req = rebuild_request_for_upstream(parts, full_body, host, connect_port);
+            match req {
+                Ok(req) => {
+                    forward_request_boxed(
+                        req,
+                        connect_host,
+                        connect_port,
+                        host.to_string(),
+                        self.upstream_tls_config.clone(),
+                    )
+                    .await
+                }
+                Err(e) => Err(e),
+            }
         } else {
             let (mut parts, body) = req.into_parts();
             self.credential_engine
