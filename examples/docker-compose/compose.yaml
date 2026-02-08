@@ -15,9 +15,9 @@
 #   2. Generate a CA:     cargo run -- generate-ca --out ./certs/
 #
 # Usage:
-#   # Set paths (or use defaults)
-#   export BINARY=./target/debug/redlimitador
-#   export CA_DIR=./certs
+#   # Set paths to binary and CA directory (absolute paths required)
+#   export BINARY="$(pwd)/target/debug/redlimitador"
+#   export CA_DIR="$(pwd)/certs"
 #
 #   # Start services
 #   docker compose -f examples/docker-compose/compose.yaml up -d
@@ -32,10 +32,10 @@ services:
   proxy:
     image: ubuntu:24.04
     volumes:
-      - ${BINARY:-./target/debug/redlimitador}:/usr/local/bin/redlimitador:ro
-      - ./examples/docker-compose/config.toml:/etc/redlimitador/config.toml:ro
-      - ${CA_DIR:-./certs}/ca.crt:/etc/redlimitador/ca.crt:ro
-      - ${CA_DIR:-./certs}/ca.key:/etc/redlimitador/ca.key:ro
+      - ${BINARY:?Set BINARY to absolute path of redlimitador binary}:/usr/local/bin/redlimitador:ro
+      - ./config.toml:/etc/redlimitador/config.toml:ro
+      - ${CA_DIR:?Set CA_DIR to absolute path of CA certificate directory}/ca.crt:/etc/redlimitador/ca.crt:ro
+      - ${CA_DIR:?Set CA_DIR to absolute path of CA certificate directory}/ca.key:/etc/redlimitador/ca.key:ro
     command:
       - /usr/local/bin/redlimitador
       - run
@@ -75,7 +75,7 @@ services:
       - GIT_SSL_CAINFO=/etc/redlimitador/ca.crt
       - REQUESTS_CA_BUNDLE=/etc/redlimitador/ca.crt
     volumes:
-      - ${CA_DIR:-./certs}/ca.crt:/etc/redlimitador/ca.crt:ro
+      - ${CA_DIR:?Set CA_DIR to absolute path of CA certificate directory}/ca.crt:/etc/redlimitador/ca.crt:ro
     networks:
       - internal
 

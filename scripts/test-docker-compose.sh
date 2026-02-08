@@ -2,8 +2,8 @@
 #
 # test-docker-compose.sh — Integration tests for the Docker Compose example
 #
-# Prerequisites: Docker running with compose plugin, cargo build completed.
-# Skips gracefully if Docker or compose plugin is unavailable.
+# Prerequisites: Docker running with compose (plugin or standalone), cargo build completed.
+# Skips gracefully if Docker or compose is unavailable.
 #
 set -euo pipefail
 
@@ -35,8 +35,13 @@ if ! docker info >/dev/null 2>&1; then
     exit 0
 fi
 
-if ! docker compose version >/dev/null 2>&1; then
-    echo "Docker Compose plugin is not available. Skipping all tests."
+# Detect compose command: prefer "docker compose" (v2 plugin), fall back to "docker-compose" (v1)
+if docker compose version >/dev/null 2>&1; then
+    COMPOSE_CMD="docker compose"
+elif docker-compose --version >/dev/null 2>&1; then
+    COMPOSE_CMD="docker-compose"
+else
+    echo "Docker Compose is not available. Skipping all tests."
     exit 0
 fi
 
@@ -66,9 +71,9 @@ echo "Generating CA certificate..."
 COMPOSE_PROJECT_NAME="rl-compose-test-$$"
 export COMPOSE_PROJECT_NAME BINARY CA_DIR
 
-# Compose helper — runs docker compose with our file and project name
+# Compose helper — runs compose with our file and project name
 dc() {
-    docker compose -f "$COMPOSE_FILE" "$@"
+    $COMPOSE_CMD -f "$COMPOSE_FILE" "$@"
 }
 
 # Cleanup on exit
