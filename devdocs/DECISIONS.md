@@ -75,3 +75,33 @@ each command, checks them against the `branches` patterns, and either blocks the
 request or forwards it (re-sending the buffered pkt-lines followed by the remaining
 body stream).
 
+### Git protocol error responses for blocked pushes
+
+When a push is blocked by branch restrictions, the proxy returns a proper git
+`receive-pack` response instead of HTTP 451. Git clients can't display HTTP response
+bodies, so HTTP 451 produces cryptic errors like "the remote end hung up unexpectedly".
+
+The proxy generates an HTTP 200 response with `Content-Type: application/x-git-receive-pack-result`
+containing:
+
+1. The client's capabilities are extracted from the first pkt-line (`report-status` or
+   `report-status-v2`, `side-band-64k`).
+2. A `report-status` payload is built: `unpack ok\n` followed by `ng <ref> blocked by
+   proxy policy\n` for each blocked ref, terminated by a flush packet.
+3. When `side-band-64k` is negotiated, the report-status is wrapped in sideband channel 1,
+   and a human-readable message is sent on channel 2 (displayed as `remote: ...`).
+
+This matches how server-side `pre-receive` hooks report errors, so git clients display:
+```
+remote: redlimitador: push to branch 'main' blocked by proxy policy
+ ! [remote rejected] main -> main (blocked by proxy policy)
+```
+
+Both `report-status` (v1) and `report-status-v2` capabilities are recognized; the v1
+response format is a valid subset of v2, so the same response works for both.
+
+This approach only applies to branch-level blocking (`AllowedWithBranchCheck`). Endpoint-level
+blocking (`FilterResult::Blocked` for git-receive-pack URLs) and plain HTTP continue to
+return HTTP 451, since the proxy doesn't have the request body available to extract
+capabilities.
+
