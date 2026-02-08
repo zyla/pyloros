@@ -34,7 +34,9 @@ cargo run -- validate-config --config config.toml        # Validate config
 
 After context compaction (when conversation history is summarized), reread `devdocs/SPEC.md` and any other relevant spec documents to stay on track with requirements and guidelines.
 
-When facing design decisions, do the simpler thing but save it in devdocs/QUESTIONS.md for further consideration.
+When facing design decisions, do the simpler thing but save it in devdocs/QUESTIONS.md for further consideration. Once a question is resolved, move the decision and rationale to `devdocs/DECISIONS.md`.
+
+`devdocs/DECISIONS.md` records implementation-level rationale and architecture details that supplement the high-level spec. Consult it when working on areas it covers (test infrastructure, TLS choices, etc.).
 
 Any problems encountered with tools (build system, etc.) should also be documented in QUESTIONS.md under "Tool Issues Encountered" for future reference.
 
@@ -129,7 +131,7 @@ Shared test infrastructure (TestCa, TestProxy, TestUpstream, handlers) lives in
 rather than appending to an existing one. This prevents merge conflicts when
 multiple features are developed in parallel across worktrees.
 
-Unit tests are inline in their respective modules (`config.rs`, `matcher.rs`, `rules.rs`, `ca.rs`, `mitm.rs`, `cache.rs`, `tunnel.rs`). Tests use `tempfile` for temporary directories and `wiremock` for HTTP mocking.
+Unit tests are inline in their respective modules (`config.rs`, `matcher.rs`, `rules.rs`, `ca.rs`, `mitm.rs`, `cache.rs`, `tunnel.rs`). Tests use `tempfile` for temporary directories.
 
 ### Test Reporting
 
