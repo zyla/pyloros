@@ -246,9 +246,42 @@ impl<'a> ReportingClient<'a> {
         self.inner.get(url).send().await.unwrap()
     }
 
+    pub fn new_plain(report: &'a TestReport, proxy_addr: SocketAddr) -> Self {
+        let proxy_url = format!("http://{}", proxy_addr);
+        let proxy = reqwest::Proxy::all(&proxy_url).unwrap();
+        let client = reqwest::Client::builder().proxy(proxy).build().unwrap();
+        Self {
+            inner: client,
+            report,
+        }
+    }
+
     pub async fn post(&self, url: &str) -> reqwest::Response {
         self.report.action(format!("POST {}", url));
         self.inner.post(url).send().await.unwrap()
+    }
+
+    pub async fn post_with_body(
+        &self,
+        url: &str,
+        body: impl Into<reqwest::Body>,
+    ) -> reqwest::Response {
+        self.report.action(format!("POST {} (with body)", url));
+        self.inner.post(url).body(body).send().await.unwrap()
+    }
+
+    pub async fn get_with_headers(&self, url: &str, headers: &[(&str, &str)]) -> reqwest::Response {
+        let header_desc = headers
+            .iter()
+            .map(|(k, v)| format!("{}:{}", k, v))
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.report.action(format!("GET {} [{}]", url, header_desc));
+        let mut req = self.inner.get(url);
+        for (k, v) in headers {
+            req = req.header(*k, *v);
+        }
+        req.send().await.unwrap()
     }
 
     pub async fn request(&self, method: reqwest::Method, url: &str) -> reqwest::Response {
@@ -688,6 +721,35 @@ impl LogCapture {
         let output = String::from_utf8_lossy(&bytes);
         output.contains(text)
     }
+}
+
+// ---------------------------------------------------------------------------
+// run_command_reported — generic reported subprocess invocation
+// ---------------------------------------------------------------------------
+
+/// Run a subprocess and report it as a test action.
+/// The action description is auto-generated from the command program name and arguments.
+pub fn run_command_reported(
+    t: &TestReport,
+    cmd: &mut std::process::Command,
+) -> std::process::Output {
+    let program = std::path::Path::new(cmd.get_program())
+        .file_name()
+        .unwrap_or(cmd.get_program().as_ref())
+        .to_string_lossy()
+        .into_owned();
+    let args: Vec<_> = cmd
+        .get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let desc = if args.is_empty() {
+        format!("Run `{}`", program)
+    } else {
+        format!("Run `{} {}`", program, args.join(" "))
+    };
+    t.action(desc);
+    cmd.output()
+        .unwrap_or_else(|e| panic!("failed to run {}: {}", program, e))
 }
 
 // ---------------------------------------------------------------------------

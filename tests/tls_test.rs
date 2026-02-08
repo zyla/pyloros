@@ -3,15 +3,71 @@
 #[path = "common/mod.rs"]
 mod common;
 
+use common::TestReport;
 use redlimitador::tls::{CertificateAuthority, GeneratedCa, MitmCertificateGenerator};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::time::Duration;
+
+// ---------------------------------------------------------------------------
+// Reported wrappers
+// ---------------------------------------------------------------------------
+
+fn generate_ca_reported(t: &TestReport) -> GeneratedCa {
+    t.action("Generate CA");
+    GeneratedCa::generate().unwrap()
+}
+
+fn load_ca_from_pem_reported(t: &TestReport, ca: &GeneratedCa) -> CertificateAuthority {
+    t.action("Load CA from PEM");
+    CertificateAuthority::from_pem(&ca.cert_pem, &ca.key_pem).unwrap()
+}
+
+fn load_ca_from_files_reported(
+    t: &TestReport,
+    cert_path: &std::path::Path,
+    key_path: &std::path::Path,
+) -> CertificateAuthority {
+    t.action("Load CA from files");
+    CertificateAuthority::from_files(cert_path, key_path).unwrap()
+}
+
+fn generate_cert_reported(
+    t: &TestReport,
+    ca: &CertificateAuthority,
+    host: &str,
+) -> (CertificateDer<'static>, PrivateKeyDer<'static>) {
+    t.action(format!("Generate cert for {}", host));
+    ca.generate_cert_for_host(host).unwrap()
+}
+
+fn create_mitm_reported(t: &TestReport, ca: CertificateAuthority) -> MitmCertificateGenerator {
+    t.action("Create MITM generator");
+    MitmCertificateGenerator::new(ca)
+}
+
+fn get_cert_reported(t: &TestReport, gen: &MitmCertificateGenerator, host: &str) {
+    t.action(format!("Get cert for {}", host));
+    let _ = gen.get_cert_for_host(host).unwrap();
+}
+
+fn server_config_reported(
+    t: &TestReport,
+    gen: &MitmCertificateGenerator,
+    host: &str,
+) -> rustls::ServerConfig {
+    t.action(format!("Create server config for {}", host));
+    gen.server_config_for_host(host).unwrap()
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[test]
 fn test_ca_generation() {
     let t = test_report!("CA certificate generation");
 
-    t.action("Generate CA");
-    let ca = GeneratedCa::generate().unwrap();
+    let ca = generate_ca_reported(&t);
 
     t.assert_contains(
         "Cert PEM has BEGIN CERTIFICATE",
@@ -39,8 +95,7 @@ fn test_ca_generation() {
 fn test_ca_save_and_load() {
     let t = test_report!("CA save to disk and reload");
 
-    t.action("Generate CA");
-    let generated = GeneratedCa::generate().unwrap();
+    let generated = generate_ca_reported(&t);
 
     let dir = tempfile::tempdir().unwrap();
     let cert_path = dir.path().join("test_ca.crt");
@@ -52,11 +107,9 @@ fn test_ca_save_and_load() {
     t.assert_true("cert file exists", cert_path.exists());
     t.assert_true("key file exists", key_path.exists());
 
-    t.action("Load CA from saved files");
-    let ca = CertificateAuthority::from_files(&cert_path, &key_path).unwrap();
+    let ca = load_ca_from_files_reported(&t, &cert_path, &key_path);
 
-    t.action("Generate cert for test.example.com");
-    let (cert_der, key_der) = ca.generate_cert_for_host("test.example.com").unwrap();
+    let (cert_der, key_der) = generate_cert_reported(&t, &ca, "test.example.com");
     t.assert_true("cert DER not empty", !cert_der.is_empty());
     t.assert_true("key DER not empty", !key_der.secret_der().is_empty());
 }
@@ -65,9 +118,8 @@ fn test_ca_save_and_load() {
 fn test_host_certificate_generation() {
     let t = test_report!("Per-host certificate generation");
 
-    t.action("Generate CA");
-    let generated = GeneratedCa::generate().unwrap();
-    let ca = CertificateAuthority::from_pem(&generated.cert_pem, &generated.key_pem).unwrap();
+    let generated = generate_ca_reported(&t);
+    let ca = load_ca_from_pem_reported(&t, &generated);
 
     let hosts = [
         "example.com",
@@ -78,8 +130,7 @@ fn test_host_certificate_generation() {
     ];
 
     for host in hosts {
-        t.action(format!("Generate cert for {}", host));
-        let (cert_der, key_der) = ca.generate_cert_for_host(host).unwrap();
+        let (cert_der, key_der) = generate_cert_reported(&t, &ca, host);
         t.assert_true(
             &format!("cert for {} not empty", host),
             !cert_der.is_empty(),
@@ -95,23 +146,19 @@ fn test_host_certificate_generation() {
 fn test_mitm_generator_caching() {
     let t = test_report!("MITM generator caches certificates");
 
-    t.action("Generate CA + create MITM generator");
-    let generated = GeneratedCa::generate().unwrap();
-    let ca = CertificateAuthority::from_pem(&generated.cert_pem, &generated.key_pem).unwrap();
-    let gen = MitmCertificateGenerator::new(ca);
+    let generated = generate_ca_reported(&t);
+    let ca = load_ca_from_pem_reported(&t, &generated);
+    let gen = create_mitm_reported(&t, ca);
 
     t.assert_eq("Initial cache size", &gen.cache_size(), &0usize);
 
-    t.action("Generate cert for example.com");
-    let _ = gen.get_cert_for_host("example.com").unwrap();
+    get_cert_reported(&t, &gen, "example.com");
     t.assert_eq("Cache size after first host", &gen.cache_size(), &1usize);
 
-    t.action("Request example.com again (should hit cache)");
-    let _ = gen.get_cert_for_host("example.com").unwrap();
+    get_cert_reported(&t, &gen, "example.com");
     t.assert_eq("Cache size unchanged", &gen.cache_size(), &1usize);
 
-    t.action("Generate cert for other.com");
-    let _ = gen.get_cert_for_host("other.com").unwrap();
+    get_cert_reported(&t, &gen, "other.com");
     t.assert_eq("Cache size after second host", &gen.cache_size(), &2usize);
 }
 
@@ -119,18 +166,17 @@ fn test_mitm_generator_caching() {
 fn test_mitm_generator_cache_capacity() {
     let t = test_report!("MITM generator evicts oldest when cache full");
 
+    let generated = generate_ca_reported(&t);
+    let ca = load_ca_from_pem_reported(&t, &generated);
+
     t.action("Create MITM generator with capacity=2");
-    let generated = GeneratedCa::generate().unwrap();
-    let ca = CertificateAuthority::from_pem(&generated.cert_pem, &generated.key_pem).unwrap();
     let gen = MitmCertificateGenerator::with_cache(ca, 2, Duration::from_secs(3600));
 
-    t.action("Fill cache: one.com, two.com");
-    let _ = gen.get_cert_for_host("one.com").unwrap();
-    let _ = gen.get_cert_for_host("two.com").unwrap();
+    get_cert_reported(&t, &gen, "one.com");
+    get_cert_reported(&t, &gen, "two.com");
     t.assert_eq("Cache full at 2", &gen.cache_size(), &2usize);
 
-    t.action("Add three.com (should evict oldest)");
-    let _ = gen.get_cert_for_host("three.com").unwrap();
+    get_cert_reported(&t, &gen, "three.com");
     t.assert_eq("Cache still at capacity 2", &gen.cache_size(), &2usize);
 }
 
@@ -140,13 +186,11 @@ fn test_server_config_generation() {
 
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
-    t.action("Generate CA + create MITM generator");
-    let generated = GeneratedCa::generate().unwrap();
-    let ca = CertificateAuthority::from_pem(&generated.cert_pem, &generated.key_pem).unwrap();
-    let gen = MitmCertificateGenerator::new(ca);
+    let generated = generate_ca_reported(&t);
+    let ca = load_ca_from_pem_reported(&t, &generated);
+    let gen = create_mitm_reported(&t, ca);
 
-    t.action("Create server config for example.com");
-    let config = gen.server_config_for_host("example.com").unwrap();
+    let config = server_config_reported(&t, &gen, "example.com");
 
     t.assert_eq(
         "ALPN protocols",
@@ -159,10 +203,9 @@ fn test_server_config_generation() {
 fn test_ca_cert_der() {
     let t = test_report!("CA DER export not empty");
 
-    t.action("Generate CA + create MITM generator");
-    let generated = GeneratedCa::generate().unwrap();
-    let ca = CertificateAuthority::from_pem(&generated.cert_pem, &generated.key_pem).unwrap();
-    let gen = MitmCertificateGenerator::new(ca);
+    let generated = generate_ca_reported(&t);
+    let ca = load_ca_from_pem_reported(&t, &generated);
+    let gen = create_mitm_reported(&t, ca);
 
     let ca_der = gen.ca_cert_der();
     t.assert_true("CA DER not empty", !ca_der.is_empty());

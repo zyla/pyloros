@@ -129,6 +129,8 @@ Tests produce a human-readable report showing, for each test: what was done, wha
 - The Markdown report is published to the GitHub Actions job summary so it's visible directly in the run without downloading artifacts.
 - Reports are also uploaded as CI artifacts.
 
+Test actions (HTTP requests, CLI invocations, etc.) should be performed through wrapper functions that both execute the action and emit a matching report entry. Bare `t.action()` + manual code pairs are not acceptable — the action description and execution must be coupled in a single API call so they can't drift apart. Examples: `ReportingClient` for HTTP requests, `_reported()` variants of test helpers.
+
 ## Documentation
 
 The project README (`README.md`) must contain:
