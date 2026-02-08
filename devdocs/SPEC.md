@@ -217,6 +217,7 @@ The project README (`README.md`) must contain:
 - Project name, tagline, and brief description of what it does and why
 - Overview of the deployment model (one proxy per VM/container)
 - Quick-start guide: generate CA, create config, start proxy, configure client
+- Per-tool client configuration guide (curl, git, Node.js/Claude Code) covering proxy env vars, CA cert setup, and tool-specific gotchas
 - Configuration reference with example covering `[proxy]`, `[logging]`, and `[[rules]]` sections
 - CLI reference for all subcommands (`run`, `generate-ca`, `validate-config`) with flags
 - Build from source instructions (prerequisites, cargo build)

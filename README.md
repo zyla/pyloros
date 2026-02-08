@@ -117,6 +117,49 @@ curl https://api.github.com/zen
 curl https://example.com/
 ```
 
+## Client Configuration
+
+After starting the proxy and trusting the CA system-wide (step 2), configure individual tools as follows. System-wide CA trust works for most native tools, but some (notably Node.js-based tools) bundle their own CA store and need explicit configuration.
+
+### curl
+
+```bash
+export HTTPS_PROXY=http://127.0.0.1:8080
+```
+
+System CA trust works for the certificate. To override explicitly:
+
+```bash
+export CURL_CA_BUNDLE=/path/to/certs/ca.crt
+```
+
+**Gotchas:**
+- For plain HTTP URLs, use **lowercase** `http_proxy` — curl ignores uppercase `HTTP_PROXY` for `http://` URLs as a CGI security measure.
+- curl skips the proxy for localhost by default. Set `no_proxy=""` if you need to test with localhost URLs.
+
+### git
+
+```bash
+export HTTPS_PROXY=http://127.0.0.1:8080
+```
+
+System CA trust works for the certificate. To override explicitly:
+
+```bash
+export GIT_SSL_CAINFO=/path/to/certs/ca.crt
+# or
+git config --global http.sslCAInfo /path/to/certs/ca.crt
+```
+
+### Node.js / Claude Code
+
+```bash
+export HTTPS_PROXY=http://127.0.0.1:8080
+export NODE_EXTRA_CA_CERTS=/path/to/certs/ca.crt
+```
+
+Node.js does **not** use the system CA store, so `NODE_EXTRA_CA_CERTS` is required. This applies to all Node.js-based tools including Claude Code.
+
 ## Configuration
 
 Configuration uses TOML format. Pass it via `--config` or set values with CLI flags.
