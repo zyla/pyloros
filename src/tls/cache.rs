@@ -93,8 +93,8 @@ impl Default for CertificateCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_report;
     use crate::tls::ca::{CertificateAuthority, GeneratedCa};
+    use pyloros_test_support::test_report;
 
     fn generate_test_cert(hostname: &str) -> (CertificateDer<'static>, PrivateKeyDer<'static>) {
         let generated = GeneratedCa::generate().unwrap();

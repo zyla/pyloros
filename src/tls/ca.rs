@@ -207,7 +207,7 @@ impl CertificateAuthority {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_report;
+    use pyloros_test_support::test_report;
 
     #[test]
     fn test_generate_ca() {

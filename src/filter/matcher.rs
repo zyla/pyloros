@@ -242,7 +242,7 @@ mod tests {
 
     mod pattern_matcher {
         use super::*;
-        use crate::test_report;
+        use pyloros_test_support::test_report;
 
         #[test]
         fn test_literal_match() {
@@ -355,7 +355,7 @@ mod tests {
 
     mod url_pattern {
         use super::*;
-        use crate::test_report;
+        use pyloros_test_support::test_report;
 
         #[test]
         fn test_simple_url() {

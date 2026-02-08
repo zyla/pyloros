@@ -242,7 +242,7 @@ impl CredentialEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_report;
+    use pyloros_test_support::test_report;
 
     fn make_credential(url: &str, header: &str, value: &str) -> Credential {
         Credential::Header {

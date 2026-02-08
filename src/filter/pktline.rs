@@ -302,7 +302,7 @@ fn ref_matches_any_pattern(refname: &str, patterns: &[PatternMatcher]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_report;
+    use pyloros_test_support::test_report;
 
     /// Build a pkt-line from a string (adds 4-hex-digit length prefix).
     fn pktline(content: &str) -> Vec<u8> {

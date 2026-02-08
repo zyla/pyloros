@@ -451,10 +451,10 @@ pub fn resolve_credential_value(value: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_report;
+    use pyloros_test_support::test_report;
 
     fn assert_config_rejects(title: &str, toml_input: &str, expected_substr: Option<&str>) {
-        let t = crate::test_support::TestReport::new(
+        let t = pyloros_test_support::TestReport::new(
             &format!("pyloros::config::tests::{}", title.replace(' ', "_")),
             title,
             file!(),

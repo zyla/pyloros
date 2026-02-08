@@ -353,7 +353,7 @@ impl Default for FilterEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_report;
+    use pyloros_test_support::test_report;
 
     fn make_rule(method: &str, url: &str) -> Rule {
         Rule {
