@@ -1,0 +1,86 @@
+# Docker Compose example: run containers with network access routed through
+# the redlimitador proxy.
+#
+# Architecture (same as scripts/docker-sandbox.sh):
+#
+#   external network (bridge) ─── proxy ─── Internet
+#                                   │
+#   internal network (--internal) ── sandbox
+#
+# The sandbox container has NO direct internet access; all traffic must go
+# through the proxy's allowlist rules.
+#
+# Prerequisites:
+#   1. Build the binary:  cargo build [--release]
+#   2. Generate a CA:     cargo run -- generate-ca --out ./certs/
+#
+# Usage:
+#   # Set paths (or use defaults)
+#   export BINARY=./target/debug/redlimitador
+#   export CA_DIR=./certs
+#
+#   # Start services
+#   docker compose -f examples/docker-compose/compose.yaml up -d
+#
+#   # Run commands in the sandbox
+#   docker compose -f examples/docker-compose/compose.yaml exec sandbox sh
+#
+#   # Tear down
+#   docker compose -f examples/docker-compose/compose.yaml down
+
+services:
+  proxy:
+    image: ubuntu:24.04
+    volumes:
+      - ${BINARY:-./target/debug/redlimitador}:/usr/local/bin/redlimitador:ro
+      - ./examples/docker-compose/config.toml:/etc/redlimitador/config.toml:ro
+      - ${CA_DIR:-./certs}/ca.crt:/etc/redlimitador/ca.crt:ro
+      - ${CA_DIR:-./certs}/ca.key:/etc/redlimitador/ca.key:ro
+    command:
+      - /usr/local/bin/redlimitador
+      - run
+      - --config
+      - /etc/redlimitador/config.toml
+      - --ca-cert
+      - /etc/redlimitador/ca.crt
+      - --ca-key
+      - /etc/redlimitador/ca.key
+      - --bind
+      - "0.0.0.0:8080"
+    networks:
+      - external
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/8080'"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+
+  sandbox:
+    image: alpine:latest
+    command: sleep infinity
+    depends_on:
+      proxy:
+        condition: service_healthy
+    environment:
+      - HTTP_PROXY=http://proxy:8080
+      - HTTPS_PROXY=http://proxy:8080
+      - http_proxy=http://proxy:8080
+      - https_proxy=http://proxy:8080
+      - no_proxy=
+      - SSL_CERT_FILE=/etc/redlimitador/ca.crt
+      - CURL_CA_BUNDLE=/etc/redlimitador/ca.crt
+      - NODE_EXTRA_CA_CERTS=/etc/redlimitador/ca.crt
+      - GIT_SSL_CAINFO=/etc/redlimitador/ca.crt
+      - REQUESTS_CA_BUNDLE=/etc/redlimitador/ca.crt
+    volumes:
+      - ${CA_DIR:-./certs}/ca.crt:/etc/redlimitador/ca.crt:ro
+    networks:
+      - internal
+
+networks:
+  external:
+    driver: bridge
+  internal:
+    internal: true

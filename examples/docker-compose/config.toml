@@ -1,0 +1,24 @@
+# Example proxy config for Docker Compose sandbox.
+# CA cert/key are passed via CLI flags in compose.yaml.
+
+[proxy]
+bind_address = "0.0.0.0:8080"
+
+[logging]
+level = "info"
+log_requests = true
+
+# Allow curl to example.com (used by test script)
+[[rules]]
+method = "*"
+url = "https://example.com/*"
+
+# Allow git clone of a small public repo
+[[rules]]
+git = "fetch"
+url = "https://github.com/octocat/Hello-World"
+
+# Allow GitHub API access
+[[rules]]
+method = "*"
+url = "https://api.github.com/*"
