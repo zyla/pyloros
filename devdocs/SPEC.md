@@ -96,6 +96,7 @@ subcommands:
 ### Logging
 - Configurable log level (error/warn/info/debug/trace)
 - Separate control over logging of allowed and blocked requests (e.g., log only blocked to reduce noise, or only allowed for auditing)
+- Error messages for failed upstream requests must include the request method and URL for diagnostics
 
 ## Technical Decisions
 

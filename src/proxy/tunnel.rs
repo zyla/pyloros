@@ -209,7 +209,7 @@ impl TunnelHandler {
                 return match result {
                     Ok(resp) => Ok(resp),
                     Err(e) => {
-                        tracing::error!(error = %e, "Failed to forward request");
+                        tracing::error!(method = %method, url = %full_url, error = %e, "Failed to forward request");
                         Ok(error_response(&e.to_string()))
                     }
                 };
@@ -255,7 +255,7 @@ impl TunnelHandler {
         match result {
             Ok(resp) => Ok(resp),
             Err(e) => {
-                tracing::error!(error = %e, "Failed to forward request");
+                tracing::error!(method = %method, url = %full_url, error = %e, "Failed to forward request");
                 Ok(error_response(&e.to_string()))
             }
         }
@@ -331,6 +331,9 @@ async fn forward_request_boxed(
     port: u16,
     upstream_tls_config: Option<Arc<ClientConfig>>,
 ) -> Result<Response<BoxBody<Bytes, hyper::Error>>> {
+    let method = req.method().clone();
+    let uri = req.uri().clone();
+
     let tls_stream = connect_upstream_tls(&host, port, upstream_tls_config).await?;
 
     // Check negotiated ALPN protocol
@@ -343,7 +346,12 @@ async fn forward_request_boxed(
         // HTTP/2 handshake
         let (mut sender, conn) = hyper::client::conn::http2::handshake(TokioExecutor::new(), io)
             .await
-            .map_err(|e| Error::proxy(format!("HTTP/2 handshake failed: {}", e)))?;
+            .map_err(|e| {
+                Error::proxy(format!(
+                    "{} {}: HTTP/2 handshake failed: {}",
+                    method, uri, e
+                ))
+            })?;
 
         tokio::spawn(async move {
             if let Err(e) = conn.await {
@@ -351,10 +359,9 @@ async fn forward_request_boxed(
             }
         });
 
-        let resp = sender
-            .send_request(req)
-            .await
-            .map_err(|e| Error::proxy(format!("HTTP/2 request failed: {}", e)))?;
+        let resp = sender.send_request(req).await.map_err(|e| {
+            Error::proxy(format!("{} {}: HTTP/2 request failed: {}", method, uri, e))
+        })?;
 
         let (parts, body) = resp.into_parts();
         let body = body.map_err(|e| e).boxed();
@@ -363,7 +370,9 @@ async fn forward_request_boxed(
         // HTTP/1.1 handshake
         let (mut sender, conn) = hyper::client::conn::http1::handshake(io)
             .await
-            .map_err(|e| Error::proxy(format!("HTTP handshake failed: {}", e)))?;
+            .map_err(|e| {
+                Error::proxy(format!("{} {}: HTTP handshake failed: {}", method, uri, e))
+            })?;
 
         tokio::spawn(async move {
             if let Err(e) = conn.await {
@@ -374,7 +383,7 @@ async fn forward_request_boxed(
         let resp = sender
             .send_request(req)
             .await
-            .map_err(|e| Error::proxy(format!("Request failed: {}", e)))?;
+            .map_err(|e| Error::proxy(format!("{} {}: request failed: {}", method, uri, e)))?;
 
         let (parts, body) = resp.into_parts();
         let body = body.map_err(|e| e).boxed();
@@ -395,10 +404,18 @@ async fn forward_websocket(
     let tls_stream = connect_upstream_tls(&host, port, upstream_tls_config).await?;
     let io = TokioIo::new(tls_stream);
 
+    let method = req.method().clone();
+    let uri = req.uri().clone();
+
     // WebSocket requires HTTP/1.1 with upgrades
     let (mut sender, conn) = hyper::client::conn::http1::handshake(io)
         .await
-        .map_err(|e| Error::proxy(format!("HTTP handshake failed: {}", e)))?;
+        .map_err(|e| {
+            Error::proxy(format!(
+                "{} {}: WebSocket handshake failed: {}",
+                method, uri, e
+            ))
+        })?;
 
     tokio::spawn(async move {
         if let Err(e) = conn.with_upgrades().await {
@@ -412,10 +429,12 @@ async fn forward_websocket(
     let (parts, body) = req.into_parts();
     let upstream_req = rebuild_request_for_upstream(parts, body, &host, port)?;
 
-    let mut resp = sender
-        .send_request(upstream_req)
-        .await
-        .map_err(|e| Error::proxy(format!("WebSocket request failed: {}", e)))?;
+    let mut resp = sender.send_request(upstream_req).await.map_err(|e| {
+        Error::proxy(format!(
+            "{} {}: WebSocket request failed: {}",
+            method, uri, e
+        ))
+    })?;
 
     if resp.status() != StatusCode::SWITCHING_PROTOCOLS {
         let (parts, body) = resp.into_parts();
