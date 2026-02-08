@@ -56,7 +56,7 @@ When debugging, isolate first: write a minimal reproducing test before iterating
 
 ## Worktree Workflow
 
-IMPORTANT: NEVER make code changes directly in the main working directory (`/home/zyla.linux/redlimitador`). ALL development work — including during plan mode exploration — MUST happen in a worktree. The very first step of any implementation task is to create a worktree. Do not edit files, run builds, or make commits in the main directory. If you catch yourself about to modify a file in the main directory, STOP and create a worktree first. This applies even for "small" or "trivial" changes.
+IMPORTANT: NEVER make changes directly in the main working directory (`/home/zyla.linux/redlimitador`). ALL development work MUST happen in a worktree — this includes SPEC.md edits, doc changes, and early design iteration, not just code. When a new feature is proposed, create the worktree first, then write the spec update there. Do not edit files, run builds, or make commits in the main directory. If you catch yourself about to modify a file in the main directory, STOP and create a worktree first. This applies even for "small" or "trivial" changes. Multiple conversations may be running concurrently in separate worktrees, so uncommitted changes in the main directory risk being silently discarded during cleanup.
 
 When making a plan, ALWAYS mention worktree setup in it, so that user can verify that you follow this.
 
