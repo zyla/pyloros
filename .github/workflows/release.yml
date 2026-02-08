@@ -3,6 +3,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
+    branches: [main, claude/release-workflow]
 
 permissions:
   contents: write
@@ -15,6 +16,7 @@ env:
 jobs:
   release:
     name: Build & Release
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -68,6 +70,73 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          files: |
+            ${{ env.ARCHIVE }}
+            SHA256SUMS
+
+  latest:
+    name: Latest Build
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/claude/release-workflow'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.TARGET }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: musl-release
+
+      - name: Install musl-tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
+        run: cargo build --release --target ${{ env.TARGET }}
+
+      - name: Run tests
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
+        run: cargo test --target ${{ env.TARGET }}
+
+      - name: Verify static linking
+        run: |
+          file target/${{ env.TARGET }}/release/redlimitador
+          file target/${{ env.TARGET }}/release/redlimitador | grep -q "statically linked"
+
+      - name: Package tarball
+        run: |
+          ARCHIVE="redlimitador-latest-x86_64-unknown-linux-musl"
+          mkdir "$ARCHIVE"
+          cp target/${{ env.TARGET }}/release/redlimitador "$ARCHIVE/"
+          cp README.md LICENSE examples/basic_config.toml "$ARCHIVE/"
+          tar czf "${ARCHIVE}.tar.gz" "$ARCHIVE"
+          sha256sum "${ARCHIVE}.tar.gz" > SHA256SUMS
+          echo "ARCHIVE=${ARCHIVE}.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Update latest tag
+        run: |
+          git tag -f latest
+          git push -f origin latest
+
+      - name: Create/update latest GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest development build
+          body: |
+            Rolling build from the `main` branch.
+
+            **Commit:** ${{ github.sha }}
+            **Date:** ${{ github.event.head_commit.timestamp }}
+
+            This is an automated pre-release and may be unstable.
+            For stable releases, use a versioned release instead.
+          prerelease: true
+          make_latest: false
           files: |
             ${{ env.ARCHIVE }}
             SHA256SUMS

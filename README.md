@@ -29,6 +29,15 @@ curl -sL https://github.com/zyla/redlimitador/releases/download/${VERSION}/redli
 sudo mv redlimitador-${VERSION}-x86_64-unknown-linux-musl/redlimitador /usr/local/bin/
 ```
 
+### Latest development build
+
+A rolling pre-release is built from `main` on every push:
+
+```bash
+curl -sL https://github.com/zyla/redlimitador/releases/download/latest/redlimitador-latest-x86_64-unknown-linux-musl.tar.gz | tar xz
+sudo mv redlimitador-latest-x86_64-unknown-linux-musl/redlimitador /usr/local/bin/
+```
+
 ### Building from source
 
 Prerequisites: [Rust](https://www.rust-lang.org/tools/install) (stable toolchain).
