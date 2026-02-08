@@ -12,9 +12,9 @@ use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
-use super::response::{blocked_response, error_response};
+use super::response::{blocked_response, error_response, git_blocked_push_response};
 use crate::error::{Error, Result};
-use crate::filter::pktline::check_push_branches;
+use crate::filter::pktline;
 use crate::filter::{FilterEngine, FilterResult, RequestInfo};
 use crate::tls::MitmCertificateGenerator;
 
@@ -177,15 +177,17 @@ impl TunnelHandler {
                     })?
                     .to_bytes();
 
-                if !check_push_branches(&body_bytes, patterns) {
+                let blocked = pktline::blocked_refs(&body_bytes, patterns);
+                if !blocked.is_empty() {
                     if self.log_blocked_requests {
                         tracing::warn!(
                             method = %method,
                             url = %full_url,
+                            blocked_refs = ?blocked,
                             "BLOCKED (branch restriction)"
                         );
                     }
-                    return Ok(blocked_response(&method, &full_url));
+                    return Ok(git_blocked_push_response(&body_bytes, &blocked));
                 }
 
                 // Forward with the buffered body

@@ -19,6 +19,51 @@ pub fn blocked_response(method: &str, url: &str) -> Response<BoxBody<Bytes, hype
         .unwrap()
 }
 
+/// Create a git receive-pack error response for blocked pushes.
+///
+/// Instead of returning HTTP 451 (which git clients can't display meaningfully),
+/// this returns HTTP 200 with `Content-Type: application/x-git-receive-pack-result`
+/// containing proper `ng` (not good) status lines. Git clients parse these and
+/// display them as "remote rejected" errors, similar to server-side pre-receive hooks.
+pub fn git_blocked_push_response(
+    body_bytes: &[u8],
+    blocked: &[String],
+) -> Response<BoxBody<Bytes, hyper::Error>> {
+    use crate::filter::pktline;
+
+    let capabilities = pktline::extract_capabilities(body_bytes);
+
+    // Build a human-readable message listing blocked branches
+    let branch_names: Vec<&str> = blocked
+        .iter()
+        .map(|r| r.strip_prefix("refs/heads/").unwrap_or(r))
+        .collect();
+    let message = if branch_names.len() == 1 {
+        format!(
+            "push to branch '{}' blocked by proxy policy",
+            branch_names[0]
+        )
+    } else {
+        format!(
+            "push to branches [{}] blocked by proxy policy",
+            branch_names.join(", ")
+        )
+    };
+
+    let response_body = pktline::build_receive_pack_error(blocked, &message, &capabilities);
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/x-git-receive-pack-result")
+        .header("X-Blocked-By", "redlimitador")
+        .body(
+            Full::new(Bytes::from(response_body))
+                .map_err(|e| match e {})
+                .boxed(),
+        )
+        .unwrap()
+}
+
 /// Create an HTTP 502 Bad Gateway error response
 pub fn error_response(message: &str) -> Response<BoxBody<Bytes, hyper::Error>> {
     let body = format!("Proxy error: {}\n", message);
