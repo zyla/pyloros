@@ -1,7 +1,7 @@
 # Docker Compose example: run containers with network access routed through
 # the pyloros proxy.
 #
-# Architecture (same as scripts/docker-sandbox.sh):
+# Architecture:
 #
 #   external network (bridge) ─── proxy ─── Internet
 #                                   │

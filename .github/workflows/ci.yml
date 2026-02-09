@@ -81,8 +81,6 @@ jobs:
         run: cargo build --target x86_64-unknown-linux-musl
         env:
           CC_x86_64_unknown_linux_musl: musl-gcc
-      - name: Run Docker sandbox tests
-        run: scripts/test-docker-sandbox.sh
       - name: Run Docker Compose tests
         run: scripts/test-docker-compose.sh
 

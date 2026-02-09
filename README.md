@@ -188,51 +188,6 @@ export NODE_EXTRA_CA_CERTS=/path/to/certs/ca.crt
 
 Node.js does **not** use the system CA store, so `NODE_EXTRA_CA_CERTS` is required. This applies to all Node.js-based tools including Claude Code.
 
-## Docker Sandbox
-
-The `scripts/docker-sandbox.sh` script runs a Docker container with **all** network access routed exclusively through the pyloros proxy. The sandbox container has no direct internet access — all traffic must pass through the proxy's allowlist rules.
-
-### Quick Start
-
-```bash
-# Run an interactive shell with proxy-only access
-scripts/docker-sandbox.sh --config config.toml alpine:latest sh
-
-# Run a specific command
-scripts/docker-sandbox.sh --config config.toml python:3.12 pip install requests
-```
-
-### How It Works
-
-The script creates two Docker networks:
-
-- **External network** (bridge) — proxy container connects to the internet
-- **Internal network** (`--internal`) — sandbox container can only reach the proxy
-
-```
-Internet ←── Proxy (external + internal networks) ←── Sandbox (internal only)
-```
-
-The proxy container runs pyloros with your config. The sandbox container gets `HTTP_PROXY`/`HTTPS_PROXY` environment variables pointing to the proxy, plus the CA certificate mounted and configured via `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, `GIT_SSL_CAINFO`, and `REQUESTS_CA_BUNDLE`.
-
-### Options
-
-| Flag | Description |
-|------|-------------|
-| `--config FILE` | Proxy config file with rules (required) |
-| `--image IMAGE` | Docker image for the proxy (default: `ghcr.io/zyla/pyloros:latest`) |
-| `--binary PATH` | Path to local binary (builds a temporary Docker image) |
-| `--ca-dir DIR` | Use existing CA certs (default: auto-generate to temp dir) |
-| `--keep` | Don't clean up on exit (for debugging) |
-
-### Notes
-
-- By default, uses the published Docker image — no local build needed
-- Use `--binary` to test a locally-built binary (builds a temporary Docker image)
-- CA certs are auto-generated unless `--ca-dir` is provided
-- All resources (containers, networks) are cleaned up on exit unless `--keep` is used
-- Run `scripts/test-docker-sandbox.sh` to verify the setup works
-
 ## Configuration
 
 Configuration uses TOML format. Pass it via `--config` or set values with CLI flags.
