@@ -25,12 +25,14 @@
 //! }
 //! ```
 
+pub mod audit;
 pub mod config;
 pub mod error;
 pub mod filter;
 pub mod proxy;
 pub mod tls;
 
+pub use audit::AuditLogger;
 pub use config::Config;
 pub use error::{Error, Result};
 pub use filter::{CredentialEngine, FilterEngine, FilterResult, RequestInfo};
