@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
-use pyloros::{Config, GeneratedCa, ProxyServer};
+use pyloros::{AuditLogger, Config, GeneratedCa, ProxyServer};
 
 #[derive(Parser)]
 #[command(name = "pyloros")]
@@ -121,9 +121,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
 
-            // Extract optional test-only overrides before moving cfg
+            // Extract optional overrides before moving cfg
             let upstream_override_port = cfg.proxy.upstream_override_port;
             let upstream_tls_ca = cfg.proxy.upstream_tls_ca.clone();
+            let audit_log_path = cfg.logging.audit_log.clone();
 
             // Create and run server
             let mut server = ProxyServer::new(cfg)?;
@@ -143,6 +144,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .with_no_client_auth();
                 tls_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
                 server = server.with_upstream_tls(Arc::new(tls_config));
+            }
+
+            // Open audit logger if configured
+            if let Some(ref audit_path) = audit_log_path {
+                match AuditLogger::open(audit_path) {
+                    Ok(logger) => {
+                        tracing::info!(path = %audit_path, "Audit log enabled");
+                        server = server.with_audit_logger(Arc::new(logger));
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "Error: Failed to open audit log '{}': {}",
+                            audit_path, e
+                        );
+                        std::process::exit(1);
+                    }
+                }
             }
 
             tracing::info!("Starting proxy server...");
@@ -225,6 +243,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!(
                 "  Log blocked requests: {}",
                 cfg.logging.log_blocked_requests
+            );
+            println!(
+                "  Audit log: {}",
+                cfg.logging
+                    .audit_log
+                    .as_deref()
+                    .unwrap_or("disabled")
             );
             if let (Some(username), Some(password)) =
                 (&cfg.proxy.auth_username, &cfg.proxy.auth_password)
