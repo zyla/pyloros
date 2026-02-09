@@ -219,6 +219,24 @@ impl CredentialEngine {
         self.credentials.len()
     }
 
+    /// Return `(type, url_pattern)` pairs for all credentials that match the given request.
+    ///
+    /// Used by the audit logger to record which credentials were applied.
+    pub fn matched_credential_infos(&self, request_info: &RequestInfo) -> Vec<(String, String)> {
+        self.credentials
+            .iter()
+            .filter(|c| c.matches(request_info))
+            .map(|c| match c {
+                ResolvedCredential::Header { url_display, .. } => {
+                    ("header".to_string(), url_display.clone())
+                }
+                ResolvedCredential::AwsSigV4 { url_display, .. } => {
+                    ("aws-sigv4".to_string(), url_display.clone())
+                }
+            })
+            .collect()
+    }
+
     /// Credential descriptions for display (e.g. in validate-config output).
     pub fn credential_descriptions(&self) -> Vec<String> {
         self.credentials
@@ -350,6 +368,36 @@ mod tests {
         let mut headers = HeaderMap::new();
         engine.inject(&ri, &mut headers);
         t.assert_true("no header added", headers.get("x-api-key").is_none());
+    }
+
+    #[test]
+    fn test_matched_credential_infos_match() {
+        let t = test_report!("matched_credential_infos returns matching credentials");
+        let engine = CredentialEngine::new(vec![make_credential(
+            "https://api.example.com/*",
+            "x-api-key",
+            "secret123",
+        )])
+        .unwrap();
+        let ri = RequestInfo::http("GET", "https", "api.example.com", None, "/v1/data", None);
+        let infos = engine.matched_credential_infos(&ri);
+        t.assert_eq("count", &infos.len(), &1usize);
+        t.assert_eq("type", &infos[0].0.as_str(), &"header");
+        t.assert_eq("url_pattern", &infos[0].1.as_str(), &"https://api.example.com/*");
+    }
+
+    #[test]
+    fn test_matched_credential_infos_no_match() {
+        let t = test_report!("matched_credential_infos returns empty for non-matching request");
+        let engine = CredentialEngine::new(vec![make_credential(
+            "https://other.example.com/*",
+            "x-api-key",
+            "secret",
+        )])
+        .unwrap();
+        let ri = RequestInfo::http("GET", "https", "api.example.com", None, "/test", None);
+        let infos = engine.matched_credential_infos(&ri);
+        t.assert_true("empty", infos.is_empty());
     }
 
     #[test]
