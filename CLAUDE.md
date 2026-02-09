@@ -71,7 +71,10 @@ When making a plan, ALWAYS mention worktree setup in it, so that user can verify
 git branch claude/<feature-slug> main
 mkdir -p ../pyloros-worktrees
 git worktree add ../pyloros-worktrees/<feature-slug> claude/<feature-slug>
+cd ../pyloros-worktrees/<feature-slug> && lefthook install
 ```
+
+IMPORTANT: Always run `lefthook install` in new worktrees. Without this, the pre-commit hook (cargo fmt, clippy, rustc warnings) won't run and CI will fail on formatting.
 
 **Branch naming**: `claude/<feature-slug>` (lowercase, hyphen-separated).
 
