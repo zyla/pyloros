@@ -1,7 +1,7 @@
 //! Certificate Authority management
 
 use rcgen::{
-    BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair,
+    BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
     KeyUsagePurpose,
 };
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
@@ -180,16 +180,13 @@ impl CertificateAuthority {
         // Generate new key pair for this cert
         let cert_key_pair = KeyPair::generate().map_err(|e| Error::certificate(e.to_string()))?;
 
-        // Reconstruct the CA cert from its DER for signing
-        let ca_params = CertificateParams::from_ca_cert_der(&self.cert_der)
+        // Reconstruct the CA issuer from its DER for signing
+        let issuer = Issuer::from_ca_cert_der(&self.cert_der, &*self.key_pair)
             .map_err(|e| Error::certificate(format!("Failed to parse CA cert: {}", e)))?;
-        let ca_cert = ca_params
-            .self_signed(&self.key_pair)
-            .map_err(|e| Error::certificate(format!("Failed to create CA for signing: {}", e)))?;
 
         // Sign the new certificate with the CA
         let cert = params
-            .signed_by(&cert_key_pair, &ca_cert, &self.key_pair)
+            .signed_by(&cert_key_pair, &issuer)
             .map_err(|e| Error::certificate(format!("Failed to sign certificate: {}", e)))?;
 
         let cert_der = CertificateDer::from(cert.der().to_vec());
