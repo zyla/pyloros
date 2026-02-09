@@ -319,24 +319,16 @@ A Docker image is published to `ghcr.io/zyla/pyloros` with the following tags:
 
 The image uses Alpine as the base (~7MB overhead), containing only the statically-linked binary. The same release workflow that publishes GitHub Release assets also builds and pushes the Docker image.
 
-The Docker Compose example and sandbox script default to the published image, so users can start immediately without building from source.
-
-### Docker Sandbox
-
-A helper script (`scripts/docker-sandbox.sh`) runs a Docker container with all network access
-routed exclusively through the pyloros proxy using Docker internal networks. The sandbox
-container is placed on an `--internal` Docker network with no direct internet access; the proxy
-container bridges the internal and external networks, forwarding only allowed requests.
-
-When proxy authentication is enabled, the sandbox script passes the proxy URL with embedded
-credentials to the workload container via environment variables.
+The Docker Compose example defaults to the published image, so users can start immediately without building from source.
 
 ### Docker Compose Example
 
-A Docker Compose example (`examples/docker-compose/`) provides a declarative alternative to the
-imperative sandbox script, with the same two-network architecture (external bridge + internal
-isolated). A test script (`scripts/test-docker-compose.sh`) verifies allowed/blocked behavior and
-network isolation.
+A Docker Compose example (`examples/docker-compose/`) provides a declarative way to run containers
+with all network access routed through the pyloros proxy using a two-network architecture (external
+bridge + internal isolated). The sandbox container is placed on an `--internal` Docker network with
+no direct internet access; the proxy container bridges the internal and external networks, forwarding
+only allowed requests. A test script (`scripts/test-docker-compose.sh`) verifies allowed/blocked
+behavior and network isolation.
 
 When proxy authentication is enabled, the compose file passes the proxy secret to the workload
 container via Docker Compose environment variables or secrets.
