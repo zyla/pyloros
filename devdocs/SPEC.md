@@ -72,7 +72,7 @@ The optional `branches` field restricts which refs a push can target. It is only
 - If a push updates multiple refs and **any** ref is disallowed, the **entire push** is blocked.
 - When a push is blocked by branch restrictions, the proxy returns a proper git `receive-pack` response (HTTP 200 with `report-status` and sideband error messages) instead of HTTP 451. This allows git clients to display clear per-ref errors like `! [remote rejected] main -> main (blocked by proxy policy)`.
 
-See `DECISIONS.md` for implementation details (smart HTTP endpoint mapping, pkt-line inspection, compilation model).
+See `INTERNALS.md` for implementation details (smart HTTP endpoint mapping, pkt-line inspection, compilation model).
 
 #### Git-LFS support
 
@@ -167,7 +167,7 @@ Re-signs requests with real AWS credentials using AWS Signature Version 4. This 
 - Explicit HTTP proxy (no iptables)
 - MITM with CA for HTTPS inspection
 - Tokio async runtime
-- rustls + rcgen for TLS (pure Rust, no OpenSSL) — see `DECISIONS.md` for evaluation
+- rustls + rcgen for TLS (pure Rust, no OpenSSL) — see `INTERNALS.md` for evaluation
 - TOML config
 - `*` wildcard = multi-segment match
 - HTTP 451 for blocked requests
@@ -252,7 +252,7 @@ secret_access_key = "${AWS_SECRET_ACCESS_KEY}"
 - When testing integration with external tools (git, curl, claude CLI, etc.), always verify that traffic actually went through the proxy — don't just check that the tool succeeded. Record requests at the upstream handler or check proxy logs for expected entries.
 - When testing that an activity is blocked, don't only verify that the standard tool (e.g., `git push`) fails — also verify that individual protocol requests are independently blocked, since an attacker may craft requests directly, skipping discovery/negotiation steps.
 
-See `DECISIONS.md` for implementation details (E2E test architecture, port override mechanism).
+See `INTERNALS.md` for implementation details (E2E test architecture, port override mechanism).
 
 ### Binary-Level Tests
 

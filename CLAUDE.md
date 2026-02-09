@@ -39,9 +39,9 @@ cargo run -- validate-config --config config.toml        # Validate config
 
 After context compaction (when conversation history is summarized), reread `devdocs/SPEC.md` and any other relevant spec documents to stay on track with requirements and guidelines.
 
-When facing design decisions, do the simpler thing and record the decision with rationale directly in `devdocs/DECISIONS.md`. Also document any tool/build-system problems encountered there.
+When facing design decisions, do the simpler thing and record the decision with rationale directly in `devdocs/INTERNALS.md`. Also document any tool/build-system problems encountered there.
 
-`devdocs/DECISIONS.md` records implementation-level rationale and architecture details that supplement the high-level spec. Consult it when working on areas it covers (test infrastructure, TLS choices, etc.).
+`devdocs/INTERNALS.md` records implementation-level rationale and architecture details that supplement the high-level spec. Consult it when working on areas it covers (test infrastructure, TLS choices, etc.).
 
 When you learn something non-obvious (a library gotcha, a debugging trick, a pattern that worked), write it to a new file in `devdocs/lessons/` — one lesson per file, named descriptively (e.g., `rcgen-ca-cert-chain.md`). Before starting work on a topic, scan existing lessons with `ls devdocs/lessons/` for relevant prior knowledge.
 

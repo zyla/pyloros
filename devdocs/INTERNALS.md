@@ -1,4 +1,4 @@
-# Design Decisions
+# Internals
 
 Implementation-level rationale and architecture details that supplement the high-level
 spec in `SPEC.md`. Record design decisions and tool issues directly here.
