@@ -383,7 +383,11 @@ mod tests {
         let infos = engine.matched_credential_infos(&ri);
         t.assert_eq("count", &infos.len(), &1usize);
         t.assert_eq("type", &infos[0].0.as_str(), &"header");
-        t.assert_eq("url_pattern", &infos[0].1.as_str(), &"https://api.example.com/*");
+        t.assert_eq(
+            "url_pattern",
+            &infos[0].1.as_str(),
+            &"https://api.example.com/*",
+        );
     }
 
     #[test]

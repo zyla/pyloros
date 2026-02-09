@@ -10,9 +10,7 @@ use tokio::net::TcpStream;
 
 use super::response::{auth_required_response, blocked_response, error_response};
 use super::tunnel::TunnelHandler;
-use crate::audit::{
-    AuditDecision, AuditEntry, AuditEvent, AuditLogger, AuditReason,
-};
+use crate::audit::{AuditDecision, AuditEntry, AuditEvent, AuditLogger, AuditReason};
 use crate::filter::{FilterEngine, FilterResult, RequestInfo};
 
 use base64::Engine;
@@ -112,11 +110,7 @@ impl ProxyHandler {
             tracing::warn!("Proxy authentication failed");
             let url = req.uri().to_string();
             let method = req.method().to_string();
-            let host = req
-                .uri()
-                .host()
-                .unwrap_or("unknown")
-                .to_string();
+            let host = req.uri().host().unwrap_or("unknown").to_string();
             self.emit_audit(AuditEntry {
                 timestamp: crate::audit::now_iso8601(),
                 event: AuditEvent::AuthFailed,

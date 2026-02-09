@@ -219,7 +219,8 @@ mod tests {
         t.assert_contains("contains T", &ts, "T");
         t.assert_true("ends with Z", ts.ends_with('Z'));
         // Should be parseable
-        let parsed = time::OffsetDateTime::parse(&ts, &time::format_description::well_known::Rfc3339);
+        let parsed =
+            time::OffsetDateTime::parse(&ts, &time::format_description::well_known::Rfc3339);
         t.assert_true("parses as RFC 3339", parsed.is_ok());
     }
 
@@ -240,9 +241,15 @@ mod tests {
         let reasons = vec![
             (AuditReason::RuleMatched, "\"rule_matched\""),
             (AuditReason::NoMatchingRule, "\"no_matching_rule\""),
-            (AuditReason::BodyInspectionRequiresHttps, "\"body_inspection_requires_https\""),
+            (
+                AuditReason::BodyInspectionRequiresHttps,
+                "\"body_inspection_requires_https\"",
+            ),
             (AuditReason::BranchRestriction, "\"branch_restriction\""),
-            (AuditReason::LfsOperationNotAllowed, "\"lfs_operation_not_allowed\""),
+            (
+                AuditReason::LfsOperationNotAllowed,
+                "\"lfs_operation_not_allowed\"",
+            ),
             (AuditReason::NonHttpsConnect, "\"non_https_connect\""),
             (AuditReason::AuthFailed, "\"auth_failed\""),
         ];

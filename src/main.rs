@@ -154,10 +154,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         server = server.with_audit_logger(Arc::new(logger));
                     }
                     Err(e) => {
-                        eprintln!(
-                            "Error: Failed to open audit log '{}': {}",
-                            audit_path, e
-                        );
+                        eprintln!("Error: Failed to open audit log '{}': {}", audit_path, e);
                         std::process::exit(1);
                     }
                 }
@@ -246,10 +243,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             println!(
                 "  Audit log: {}",
-                cfg.logging
-                    .audit_log
-                    .as_deref()
-                    .unwrap_or("disabled")
+                cfg.logging.audit_log.as_deref().unwrap_or("disabled")
             );
             if let (Some(username), Some(password)) =
                 (&cfg.proxy.auth_username, &cfg.proxy.auth_password)

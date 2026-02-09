@@ -1,6 +1,8 @@
 mod common;
 
-use common::{ok_handler, read_audit_entries, rule, ReportingClient, TestCa, TestProxy, TestUpstream};
+use common::{
+    ok_handler, read_audit_entries, rule, ReportingClient, TestCa, TestProxy, TestUpstream,
+};
 
 #[tokio::test]
 async fn test_audit_log_allowed_https() {
@@ -15,11 +17,15 @@ async fn test_audit_log_allowed_https() {
     let audit_path = dir.path().join("audit.jsonl");
     let audit_path_str = audit_path.to_str().unwrap();
 
-    let proxy = TestProxy::builder(&ca, vec![rule("GET", "https://localhost/*")], upstream.port())
-        .audit_log(audit_path_str)
-        .report(&t)
-        .start()
-        .await;
+    let proxy = TestProxy::builder(
+        &ca,
+        vec![rule("GET", "https://localhost/*")],
+        upstream.port(),
+    )
+    .audit_log(audit_path_str)
+    .report(&t)
+    .start()
+    .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
     let resp = client.get("https://localhost/test").await;
@@ -33,13 +39,29 @@ async fn test_audit_log_allowed_https() {
 
     let entries = read_audit_entries(audit_path_str);
     t.assert_eq("entry count", &entries.len(), &1usize);
-    t.assert_eq("event", &entries[0]["event"].as_str().unwrap(), &"request_allowed");
-    t.assert_eq("decision", &entries[0]["decision"].as_str().unwrap(), &"allowed");
-    t.assert_eq("reason", &entries[0]["reason"].as_str().unwrap(), &"rule_matched");
+    t.assert_eq(
+        "event",
+        &entries[0]["event"].as_str().unwrap(),
+        &"request_allowed",
+    );
+    t.assert_eq(
+        "decision",
+        &entries[0]["decision"].as_str().unwrap(),
+        &"allowed",
+    );
+    t.assert_eq(
+        "reason",
+        &entries[0]["reason"].as_str().unwrap(),
+        &"rule_matched",
+    );
     t.assert_eq("method", &entries[0]["method"].as_str().unwrap(), &"GET");
     t.assert_contains("url", entries[0]["url"].as_str().unwrap(), "localhost");
     t.assert_eq("scheme", &entries[0]["scheme"].as_str().unwrap(), &"https");
-    t.assert_eq("protocol", &entries[0]["protocol"].as_str().unwrap(), &"https");
+    t.assert_eq(
+        "protocol",
+        &entries[0]["protocol"].as_str().unwrap(),
+        &"https",
+    );
     t.assert_true("has timestamp", entries[0]["timestamp"].as_str().is_some());
 
     proxy.shutdown();
@@ -77,9 +99,21 @@ async fn test_audit_log_blocked_request() {
 
     let entries = read_audit_entries(audit_path_str);
     t.assert_eq("entry count", &entries.len(), &1usize);
-    t.assert_eq("event", &entries[0]["event"].as_str().unwrap(), &"request_blocked");
-    t.assert_eq("decision", &entries[0]["decision"].as_str().unwrap(), &"blocked");
-    t.assert_eq("reason", &entries[0]["reason"].as_str().unwrap(), &"no_matching_rule");
+    t.assert_eq(
+        "event",
+        &entries[0]["event"].as_str().unwrap(),
+        &"request_blocked",
+    );
+    t.assert_eq(
+        "decision",
+        &entries[0]["decision"].as_str().unwrap(),
+        &"blocked",
+    );
+    t.assert_eq(
+        "reason",
+        &entries[0]["reason"].as_str().unwrap(),
+        &"no_matching_rule",
+    );
 
     proxy.shutdown();
     upstream.shutdown();
@@ -98,12 +132,16 @@ async fn test_audit_log_auth_failure() {
     let audit_path = dir.path().join("audit.jsonl");
     let audit_path_str = audit_path.to_str().unwrap();
 
-    let proxy = TestProxy::builder(&ca, vec![rule("GET", "https://localhost/*")], upstream.port())
-        .auth("user", "pass")
-        .audit_log(audit_path_str)
-        .report(&t)
-        .start()
-        .await;
+    let proxy = TestProxy::builder(
+        &ca,
+        vec![rule("GET", "https://localhost/*")],
+        upstream.port(),
+    )
+    .auth("user", "pass")
+    .audit_log(audit_path_str)
+    .report(&t)
+    .start()
+    .await;
 
     // Send a plain HTTP request without auth (avoids reqwest CONNECT error)
     let client = ReportingClient::new_plain(&t, proxy.addr());
@@ -117,9 +155,21 @@ async fn test_audit_log_auth_failure() {
 
     let entries = read_audit_entries(audit_path_str);
     t.assert_eq("entry count", &entries.len(), &1usize);
-    t.assert_eq("event", &entries[0]["event"].as_str().unwrap(), &"auth_failed");
-    t.assert_eq("reason", &entries[0]["reason"].as_str().unwrap(), &"auth_failed");
-    t.assert_eq("decision", &entries[0]["decision"].as_str().unwrap(), &"blocked");
+    t.assert_eq(
+        "event",
+        &entries[0]["event"].as_str().unwrap(),
+        &"auth_failed",
+    );
+    t.assert_eq(
+        "reason",
+        &entries[0]["reason"].as_str().unwrap(),
+        &"auth_failed",
+    );
+    t.assert_eq(
+        "decision",
+        &entries[0]["decision"].as_str().unwrap(),
+        &"blocked",
+    );
 
     proxy.shutdown();
     upstream.shutdown();
@@ -157,9 +207,21 @@ async fn test_audit_log_http_blocked() {
     let entries = read_audit_entries(audit_path_str);
     t.assert_eq("entry count", &entries.len(), &1usize);
     t.assert_eq("scheme", &entries[0]["scheme"].as_str().unwrap(), &"http");
-    t.assert_eq("protocol", &entries[0]["protocol"].as_str().unwrap(), &"http");
-    t.assert_eq("event", &entries[0]["event"].as_str().unwrap(), &"request_blocked");
-    t.assert_eq("reason", &entries[0]["reason"].as_str().unwrap(), &"no_matching_rule");
+    t.assert_eq(
+        "protocol",
+        &entries[0]["protocol"].as_str().unwrap(),
+        &"http",
+    );
+    t.assert_eq(
+        "event",
+        &entries[0]["event"].as_str().unwrap(),
+        &"request_blocked",
+    );
+    t.assert_eq(
+        "reason",
+        &entries[0]["reason"].as_str().unwrap(),
+        &"no_matching_rule",
+    );
 
     proxy.shutdown();
     upstream.shutdown();
@@ -184,12 +246,16 @@ async fn test_audit_log_credential_info() {
         value: "test-secret".to_string(),
     };
 
-    let proxy = TestProxy::builder(&ca, vec![rule("GET", "https://localhost/*")], upstream.port())
-        .credentials(vec![cred])
-        .audit_log(audit_path_str)
-        .report(&t)
-        .start()
-        .await;
+    let proxy = TestProxy::builder(
+        &ca,
+        vec![rule("GET", "https://localhost/*")],
+        upstream.port(),
+    )
+    .credentials(vec![cred])
+    .audit_log(audit_path_str)
+    .report(&t)
+    .start()
+    .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
     let resp = client.get("https://localhost/api").await;
@@ -231,10 +297,14 @@ async fn test_audit_log_disabled_by_default() {
     let audit_path = dir.path().join("audit.jsonl");
 
     // No audit_log set
-    let proxy = TestProxy::builder(&ca, vec![rule("GET", "https://localhost/*")], upstream.port())
-        .report(&t)
-        .start()
-        .await;
+    let proxy = TestProxy::builder(
+        &ca,
+        vec![rule("GET", "https://localhost/*")],
+        upstream.port(),
+    )
+    .report(&t)
+    .start()
+    .await;
 
     let client = ReportingClient::new(&t, proxy.addr(), &ca);
     let resp = client.get("https://localhost/test").await;
@@ -293,10 +363,12 @@ async fn test_audit_log_multiple_requests() {
     // Verify each has distinct URLs
     let urls: Vec<&str> = entries.iter().map(|e| e["url"].as_str().unwrap()).collect();
     t.assert_true("contains /first", urls.iter().any(|u| u.contains("/first")));
-    t.assert_true("contains /second", urls.iter().any(|u| u.contains("/second")));
+    t.assert_true(
+        "contains /second",
+        urls.iter().any(|u| u.contains("/second")),
+    );
     t.assert_true("contains /third", urls.iter().any(|u| u.contains("/third")));
 
     proxy.shutdown();
     upstream.shutdown();
 }
-
