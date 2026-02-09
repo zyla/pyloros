@@ -4,18 +4,30 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      all-rust-deps:
+        patterns: ["*"]
 
   - package-ecosystem: cargo
     directory: /fuzz
     schedule:
       interval: weekly
+    groups:
+      all-rust-deps:
+        patterns: ["*"]
 
   - package-ecosystem: cargo
     directory: /tools/test-report
     schedule:
       interval: weekly
+    groups:
+      all-rust-deps:
+        patterns: ["*"]
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      all-actions:
+        patterns: ["*"]
