@@ -110,7 +110,7 @@ impl AuditLogger {
                 return;
             }
         };
-        if let Err(e) = write!(writer, "{}\n", json) {
+        if let Err(e) = writeln!(writer, "{}", json) {
             tracing::error!(error = %e, "Failed to write audit entry");
             return;
         }

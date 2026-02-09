@@ -13,6 +13,9 @@ use tokio::net::TcpStream;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 use super::response::{blocked_response, error_response, git_blocked_push_response};
+use crate::audit::{
+    AuditCredential, AuditDecision, AuditEntry, AuditEvent, AuditGitInfo, AuditLogger, AuditReason,
+};
 use crate::error::{Error, Result};
 use crate::filter::lfs;
 use crate::filter::pktline;
@@ -24,6 +27,7 @@ pub struct TunnelHandler {
     mitm_generator: Arc<MitmCertificateGenerator>,
     filter_engine: Arc<FilterEngine>,
     credential_engine: Arc<CredentialEngine>,
+    audit_logger: Option<Arc<AuditLogger>>,
     upstream_port_override: Option<u16>,
     upstream_host_override: Option<String>,
     upstream_tls_config: Option<Arc<ClientConfig>>,
@@ -41,6 +45,7 @@ impl TunnelHandler {
             mitm_generator,
             filter_engine,
             credential_engine,
+            audit_logger: None,
             upstream_port_override: None,
             upstream_host_override: None,
             upstream_tls_config: None,
@@ -68,11 +73,35 @@ impl TunnelHandler {
         self
     }
 
+    /// Set the audit logger for structured request logging.
+    pub fn with_audit_logger(mut self, logger: Arc<AuditLogger>) -> Self {
+        self.audit_logger = Some(logger);
+        self
+    }
+
     /// Configure request logging.
     pub fn with_request_logging(mut self, log_allowed: bool, log_blocked: bool) -> Self {
         self.log_allowed_requests = log_allowed;
         self.log_blocked_requests = log_blocked;
         self
+    }
+
+    fn emit_audit(&self, entry: AuditEntry) {
+        if let Some(ref logger) = self.audit_logger {
+            logger.log(&entry);
+        }
+    }
+
+    /// Build the first matching credential info for the audit entry.
+    fn audit_credential(&self, request_info: &RequestInfo) -> Option<AuditCredential> {
+        self.credential_engine
+            .matched_credential_infos(request_info)
+            .into_iter()
+            .next()
+            .map(|(cred_type, url_pattern)| AuditCredential {
+                cred_type,
+                url_pattern,
+            })
     }
 
     /// Run a MITM tunnel on an upgraded connection
@@ -166,6 +195,19 @@ impl TunnelHandler {
                         "BLOCKED"
                     );
                 }
+                self.emit_audit(AuditEntry {
+                    timestamp: crate::audit::now_iso8601(),
+                    event: AuditEvent::RequestBlocked,
+                    method: method.clone(),
+                    url: full_url.clone(),
+                    host: host.to_string(),
+                    scheme: "https".to_string(),
+                    protocol: "https".to_string(),
+                    decision: AuditDecision::Blocked,
+                    reason: AuditReason::NoMatchingRule,
+                    credential: None,
+                    git: None,
+                });
                 return Ok(blocked_response(&method, &full_url));
             }
             FilterResult::AllowedWithBranchCheck(ref patterns) => {
@@ -200,8 +242,38 @@ impl TunnelHandler {
                             "BLOCKED (branch restriction)"
                         );
                     }
+                    self.emit_audit(AuditEntry {
+                        timestamp: crate::audit::now_iso8601(),
+                        event: AuditEvent::RequestBlocked,
+                        method: method.clone(),
+                        url: full_url.clone(),
+                        host: host.to_string(),
+                        scheme: "https".to_string(),
+                        protocol: "https".to_string(),
+                        decision: AuditDecision::Blocked,
+                        reason: AuditReason::BranchRestriction,
+                        credential: None,
+                        git: Some(AuditGitInfo {
+                            blocked_refs: blocked.clone(),
+                        }),
+                    });
                     return Ok(git_blocked_push_response(&body_bytes, &blocked));
                 }
+
+                // Allowed after branch check
+                self.emit_audit(AuditEntry {
+                    timestamp: crate::audit::now_iso8601(),
+                    event: AuditEvent::RequestAllowed,
+                    method: method.clone(),
+                    url: full_url.clone(),
+                    host: host.to_string(),
+                    scheme: "https".to_string(),
+                    protocol: "https".to_string(),
+                    decision: AuditDecision::Allowed,
+                    reason: AuditReason::RuleMatched,
+                    credential: self.audit_credential(&request_info),
+                    git: None,
+                });
 
                 // Inject credentials (body already buffered)
                 self.credential_engine.inject_with_body(
@@ -243,8 +315,36 @@ impl TunnelHandler {
                             "BLOCKED (LFS operation not allowed)"
                         );
                     }
+                    self.emit_audit(AuditEntry {
+                        timestamp: crate::audit::now_iso8601(),
+                        event: AuditEvent::RequestBlocked,
+                        method: method.clone(),
+                        url: full_url.clone(),
+                        host: host.to_string(),
+                        scheme: "https".to_string(),
+                        protocol: "https".to_string(),
+                        decision: AuditDecision::Blocked,
+                        reason: AuditReason::LfsOperationNotAllowed,
+                        credential: None,
+                        git: None,
+                    });
                     return Ok(blocked_response(&method, &full_url));
                 }
+
+                // Allowed after LFS check
+                self.emit_audit(AuditEntry {
+                    timestamp: crate::audit::now_iso8601(),
+                    event: AuditEvent::RequestAllowed,
+                    method: method.clone(),
+                    url: full_url.clone(),
+                    host: host.to_string(),
+                    scheme: "https".to_string(),
+                    protocol: "https".to_string(),
+                    decision: AuditDecision::Allowed,
+                    reason: AuditReason::RuleMatched,
+                    credential: self.audit_credential(&request_info),
+                    git: None,
+                });
 
                 return self
                     .forward_buffered(parts, body_bytes, host, port, &method, &full_url)
@@ -258,6 +358,19 @@ impl TunnelHandler {
                         "ALLOWED"
                     );
                 }
+                self.emit_audit(AuditEntry {
+                    timestamp: crate::audit::now_iso8601(),
+                    event: AuditEvent::RequestAllowed,
+                    method: method.clone(),
+                    url: full_url.clone(),
+                    host: host.to_string(),
+                    scheme: "https".to_string(),
+                    protocol: "https".to_string(),
+                    decision: AuditDecision::Allowed,
+                    reason: AuditReason::RuleMatched,
+                    credential: self.audit_credential(&request_info),
+                    git: None,
+                });
             }
         }
 

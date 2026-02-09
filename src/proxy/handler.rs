@@ -10,6 +10,9 @@ use tokio::net::TcpStream;
 
 use super::response::{auth_required_response, blocked_response, error_response};
 use super::tunnel::TunnelHandler;
+use crate::audit::{
+    AuditDecision, AuditEntry, AuditEvent, AuditLogger, AuditReason,
+};
 use crate::filter::{FilterEngine, FilterResult, RequestInfo};
 
 use base64::Engine;
@@ -19,6 +22,7 @@ pub struct ProxyHandler {
     tunnel_handler: Arc<TunnelHandler>,
     filter_engine: Arc<FilterEngine>,
     auth: Option<(String, String)>,
+    audit_logger: Option<Arc<AuditLogger>>,
     log_allowed_requests: bool,
     log_blocked_requests: bool,
 }
@@ -29,6 +33,7 @@ impl ProxyHandler {
             tunnel_handler,
             filter_engine,
             auth: None,
+            audit_logger: None,
             log_allowed_requests: true,
             log_blocked_requests: true,
         }
@@ -43,6 +48,17 @@ impl ProxyHandler {
     pub fn with_auth(mut self, auth: Option<(String, String)>) -> Self {
         self.auth = auth;
         self
+    }
+
+    pub fn with_audit_logger(mut self, logger: Option<Arc<AuditLogger>>) -> Self {
+        self.audit_logger = logger;
+        self
+    }
+
+    fn emit_audit(&self, entry: AuditEntry) {
+        if let Some(ref logger) = self.audit_logger {
+            logger.log(&entry);
+        }
     }
 
     /// Check the Proxy-Authorization header against configured credentials.
@@ -94,6 +110,26 @@ impl ProxyHandler {
         // Check proxy authentication before processing any request
         if !self.check_auth(&req) {
             tracing::warn!("Proxy authentication failed");
+            let url = req.uri().to_string();
+            let method = req.method().to_string();
+            let host = req
+                .uri()
+                .host()
+                .unwrap_or("unknown")
+                .to_string();
+            self.emit_audit(AuditEntry {
+                timestamp: crate::audit::now_iso8601(),
+                event: AuditEvent::AuthFailed,
+                method,
+                url,
+                host,
+                scheme: "unknown".to_string(),
+                protocol: "unknown".to_string(),
+                decision: AuditDecision::Blocked,
+                reason: AuditReason::AuthFailed,
+                credential: None,
+                git: None,
+            });
             return Ok(auth_required_response());
         }
 
@@ -118,7 +154,21 @@ impl ProxyHandler {
         // Only allow HTTPS (port 443 or explicit https)
         if port != 443 {
             tracing::warn!(host = %host, port = %port, "Blocking non-HTTPS CONNECT");
-            return Ok(blocked_response("CONNECT", &format!("{}:{}", host, port)));
+            let url = format!("{}:{}", host, port);
+            self.emit_audit(AuditEntry {
+                timestamp: crate::audit::now_iso8601(),
+                event: AuditEvent::RequestBlocked,
+                method: "CONNECT".to_string(),
+                url: url.clone(),
+                host: host.clone(),
+                scheme: "unknown".to_string(),
+                protocol: "unknown".to_string(),
+                decision: AuditDecision::Blocked,
+                reason: AuditReason::NonHttpsConnect,
+                credential: None,
+                git: None,
+            });
+            return Ok(blocked_response("CONNECT", &url));
         }
 
         // Get the upgrade future before we move the request
@@ -180,6 +230,19 @@ impl ProxyHandler {
                         "BLOCKED (HTTP)"
                     );
                 }
+                self.emit_audit(AuditEntry {
+                    timestamp: crate::audit::now_iso8601(),
+                    event: AuditEvent::RequestBlocked,
+                    method: method.clone(),
+                    url: full_url.clone(),
+                    host: host.clone(),
+                    scheme: scheme.to_string(),
+                    protocol: "http".to_string(),
+                    decision: AuditDecision::Blocked,
+                    reason: AuditReason::NoMatchingRule,
+                    credential: None,
+                    git: None,
+                });
                 return Ok(blocked_response(&method, &full_url));
             }
             FilterResult::AllowedWithBranchCheck(_) | FilterResult::AllowedWithLfsCheck(_) => {
@@ -193,6 +256,19 @@ impl ProxyHandler {
                         "BLOCKED (HTTP: body inspection requires HTTPS)"
                     );
                 }
+                self.emit_audit(AuditEntry {
+                    timestamp: crate::audit::now_iso8601(),
+                    event: AuditEvent::RequestBlocked,
+                    method: method.clone(),
+                    url: full_url.clone(),
+                    host: host.clone(),
+                    scheme: scheme.to_string(),
+                    protocol: "http".to_string(),
+                    decision: AuditDecision::Blocked,
+                    reason: AuditReason::BodyInspectionRequiresHttps,
+                    credential: None,
+                    git: None,
+                });
                 return Ok(blocked_response(&method, &full_url));
             }
             FilterResult::Allowed => {
@@ -203,6 +279,19 @@ impl ProxyHandler {
                         "ALLOWED (HTTP)"
                     );
                 }
+                self.emit_audit(AuditEntry {
+                    timestamp: crate::audit::now_iso8601(),
+                    event: AuditEvent::RequestAllowed,
+                    method: method.clone(),
+                    url: full_url.clone(),
+                    host: host.clone(),
+                    scheme: scheme.to_string(),
+                    protocol: "http".to_string(),
+                    decision: AuditDecision::Allowed,
+                    reason: AuditReason::RuleMatched,
+                    credential: None,
+                    git: None,
+                });
             }
         }
 
