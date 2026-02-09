@@ -495,7 +495,7 @@ async fn test_aws_sts_through_proxy() {
     config.logging.log_blocked_requests = true;
 
     let mut server = pyloros::ProxyServer::new(config).unwrap();
-    let addr = server.bind().await.unwrap();
+    let addr = server.bind().await.unwrap().tcp_addr();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
         let _ = server.serve(shutdown_rx).await;

@@ -146,9 +146,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             tracing::info!("Starting proxy server...");
-            tracing::info!("Configure clients with:");
-            tracing::info!("  export HTTP_PROXY=http://{}", server.bind_address());
-            tracing::info!("  export HTTPS_PROXY=http://{}", server.bind_address());
+            if !server.bind_address().contains('/') {
+                tracing::info!("Configure clients with:");
+                tracing::info!("  export HTTP_PROXY=http://{}", server.bind_address());
+                tracing::info!("  export HTTPS_PROXY=http://{}", server.bind_address());
+            }
 
             // Handle Ctrl+C
             let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
