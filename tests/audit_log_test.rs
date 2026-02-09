@@ -28,6 +28,9 @@ async fn test_audit_log_allowed_https() {
     // Small delay to ensure audit write completes
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
+    let raw = std::fs::read_to_string(audit_path_str).unwrap();
+    t.output("audit_log", &raw);
+
     let entries = read_audit_entries(audit_path_str);
     t.assert_eq("entry count", &entries.len(), &1usize);
     t.assert_eq("event", &entries[0]["event"].as_str().unwrap(), &"request_allowed");
@@ -69,6 +72,9 @@ async fn test_audit_log_blocked_request() {
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
+    let raw = std::fs::read_to_string(audit_path_str).unwrap();
+    t.output("audit_log", &raw);
+
     let entries = read_audit_entries(audit_path_str);
     t.assert_eq("entry count", &entries.len(), &1usize);
     t.assert_eq("event", &entries[0]["event"].as_str().unwrap(), &"request_blocked");
@@ -106,6 +112,9 @@ async fn test_audit_log_auth_failure() {
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
+    let raw = std::fs::read_to_string(audit_path_str).unwrap();
+    t.output("audit_log", &raw);
+
     let entries = read_audit_entries(audit_path_str);
     t.assert_eq("entry count", &entries.len(), &1usize);
     t.assert_eq("event", &entries[0]["event"].as_str().unwrap(), &"auth_failed");
@@ -141,6 +150,9 @@ async fn test_audit_log_http_blocked() {
     t.assert_eq("status", &resp.status().as_u16(), &451u16);
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let raw = std::fs::read_to_string(audit_path_str).unwrap();
+    t.output("audit_log", &raw);
 
     let entries = read_audit_entries(audit_path_str);
     t.assert_eq("entry count", &entries.len(), &1usize);
@@ -184,6 +196,9 @@ async fn test_audit_log_credential_info() {
     t.assert_eq("status", &resp.status().as_u16(), &200u16);
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let raw = std::fs::read_to_string(audit_path_str).unwrap();
+    t.output("audit_log", &raw);
 
     let entries = read_audit_entries(audit_path_str);
     t.assert_eq("entry count", &entries.len(), &1usize);
@@ -267,6 +282,9 @@ async fn test_audit_log_multiple_requests() {
     t.assert_eq("third status", &resp.status().as_u16(), &200u16);
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let raw = std::fs::read_to_string(audit_path_str).unwrap();
+    t.output("audit_log", &raw);
 
     let entries = read_audit_entries(audit_path_str);
     t.assert_eq("entry count", &entries.len(), &3usize);
