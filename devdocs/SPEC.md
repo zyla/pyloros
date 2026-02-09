@@ -109,6 +109,31 @@ subcommands:
 - Separate control over logging of allowed and blocked requests (e.g., log only blocked to reduce noise, or only allowed for auditing)
 - Error messages for failed upstream requests must include the request method and URL for diagnostics
 
+### Audit Log
+
+An optional structured audit log records every request decision as a JSON object per line (JSONL) in a dedicated file. This is separate from the human-readable tracing output and designed for compliance, SIEM integration, and post-hoc analysis.
+
+- Disabled by default; enabled via `audit_log = "/path/to/file.jsonl"` in `[logging]`
+- Every proxied request produces exactly one audit entry
+- Entries are emitted at the decision point (before forwarding), so all needed info is available
+- Audit write errors are logged via tracing but never fail the request
+- No built-in log rotation — use external tools (logrotate, etc.)
+
+Each audit entry contains:
+- `timestamp` — ISO 8601 / RFC 3339 UTC timestamp
+- `event` — one of `request_allowed`, `request_blocked`, `auth_failed`
+- `method` — HTTP method
+- `url` — full request URL
+- `host` — target hostname
+- `scheme` — `http` or `https`
+- `protocol` — `http` or `https` (transport-level)
+- `decision` — `allowed` or `blocked`
+- `reason` — why the decision was made: `rule_matched`, `no_matching_rule`, `body_inspection_requires_https`, `branch_restriction`, `lfs_operation_not_allowed`, `non_https_connect`, `auth_failed`
+- `credential` (optional) — `{ "type": "header"|"aws-sigv4", "url_pattern": "..." }` for injected credentials
+- `git` (optional) — `{ "blocked_refs": ["refs/heads/main"] }` when branch restrictions apply
+
+Optional fields are omitted when not applicable.
+
 ### Proxy Authentication
 
 The proxy can require clients to authenticate before processing any requests. This prevents unauthorized network entities from using the proxy's credential injection and URL allowlisting capabilities — critical when the proxy is reachable over a network (e.g. Docker internal networks where other containers could connect).
@@ -203,6 +228,8 @@ level = "info"
 #   log_requests = false             # neither
 #   log_requests = { allowed = true, blocked = false }  # granular
 log_requests = { allowed = true, blocked = true }
+# Optional: structured JSONL audit log for compliance/SIEM
+# audit_log = "/var/log/pyloros/audit.jsonl"
 
 [[rules]]
 method = "GET"
