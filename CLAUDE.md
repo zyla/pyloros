@@ -100,6 +100,7 @@ See `devdocs/SPEC.md` for product spec (features, configuration format, technica
 - **`proxy/`** - HTTP proxy server: `server.rs` (TCP listener, connection dispatch), `handler.rs` (CONNECT vs plain HTTP routing, filter integration), `tunnel.rs` (CONNECT tunnel with MITM TLS handshake, upstream forwarding)
 - **`filter/`** - Request filtering: `rules.rs` (FilterEngine compiles config rules, evaluates RequestInfo, git rule expansion), `matcher.rs` (PatternMatcher for wildcard `*` matching on hosts/paths/queries, UrlPattern for full URL decomposition), `pktline.rs` (git pkt-line parser for branch restriction enforcement), `lfs.rs` (Git-LFS batch request JSON body inspection)
 - **`tls/`** - Certificate management: `ca.rs` (CA generation/loading, per-host cert signing), `mitm.rs` (MitmCertificateGenerator wraps CA with caching, builds rustls ServerConfig), `cache.rs` (LRU cache with TTL for generated certs)
+- **`audit.rs`** - Structured JSONL audit logging: `AuditLogger` (file writer), `AuditEntry` (serializable entry struct), enums for event/decision/reason types
 - **`config.rs`** - TOML config parsing into `Config`/`ProxyConfig`/`LoggingConfig`/`Rule` structs
 - **`error.rs`** - `thiserror`-based error types (`Error`)
 - **`main.rs`** - clap CLI with `run`, `generate-ca`, `validate-config` subcommands
@@ -136,6 +137,7 @@ across parallel worktrees:
 - `git_smart_http_test.rs` — git clone/push through proxy (basic e2e)
 - `git_rules_test.rs` — git rule filtering: operation type, repo URL, branch restrictions
 - `git_lfs_test.rs` — Git-LFS batch endpoint filtering: operation checks, merged-scan, plain HTTP blocking
+- `audit_log_test.rs` — Structured JSONL audit log: allowed/blocked/auth entries, credential info, HTTP vs HTTPS
 
 Shared test infrastructure (TestCa, TestProxy, TestUpstream, handlers) lives in
 `tests/common/mod.rs`.
