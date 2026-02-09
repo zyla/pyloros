@@ -36,6 +36,13 @@ for tool in bwrap socat curl; do
     fi
 done
 
+# Verify bwrap can actually create network namespaces (requires unprivileged user
+# namespaces or CAP_SYS_ADMIN — not available on all CI runners)
+if ! bwrap --unshare-net --ro-bind / / -- true 2>/dev/null; then
+    echo "bwrap --unshare-net is not supported on this system. Skipping all tests."
+    exit 0
+fi
+
 # Find the pyloros binary
 BINARY=""
 MAIN_WORKTREE=""
@@ -83,6 +90,7 @@ EOF
 
 BWRAP_SCRIPT="$SCRIPT_DIR/pyloros-bwrap.sh"
 RESULT_FILE="$CA_DIR/result"
+STDERR_FILE="$CA_DIR/stderr"
 
 # Cleanup on exit
 cleanup() {
@@ -99,10 +107,10 @@ echo "Binary: $BINARY"
 echo "Config: $CONFIG"
 echo ""
 
-# Helper: run bwrap script, stdout goes to RESULT_FILE, stderr silenced.
+# Helper: run bwrap script, stdout goes to RESULT_FILE, stderr to STDERR_FILE.
 run_bwrap() {
     timeout 30 "$BWRAP_SCRIPT" --config "$CONFIG" --pyloros "$BINARY" -- "$@" \
-        > "$RESULT_FILE" 2>/dev/null
+        > "$RESULT_FILE" 2>"$STDERR_FILE"
 }
 
 # Test 1: Allowed HTTPS request through proxy
@@ -116,8 +124,10 @@ if [[ $EXIT_CODE -eq 0 ]] && grep -q "Example Domain" "$RESULT_FILE" 2>/dev/null
     pass "Allowed HTTPS request succeeds and returns expected content"
 else
     fail "Allowed HTTPS request (exit=$EXIT_CODE)"
-    echo "    Output (last 10 lines):"
-    tail -10 "$RESULT_FILE" 2>/dev/null | sed 's/^/    /' || echo "    (no output)"
+    echo "    stdout (last 10 lines):"
+    tail -10 "$RESULT_FILE" 2>/dev/null | sed 's/^/    /' || echo "    (empty)"
+    echo "    stderr (last 10 lines):"
+    tail -10 "$STDERR_FILE" 2>/dev/null | sed 's/^/    /' || echo "    (empty)"
 fi
 
 # Test 2: Blocked URL returns 451
@@ -133,6 +143,8 @@ if [[ "$HTTP_CODE" == "451" ]]; then
     pass "Blocked URL returns HTTP 451"
 else
     fail "Expected HTTP 451, got '$HTTP_CODE' (exit=$EXIT_CODE)"
+    echo "    stderr (last 5 lines):"
+    tail -5 "$STDERR_FILE" 2>/dev/null | sed 's/^/    /' || echo "    (empty)"
 fi
 
 # Test 3: Direct connection blocked (network isolation)
