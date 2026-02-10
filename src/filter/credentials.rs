@@ -424,7 +424,7 @@ mod tests {
         t.assert_eq("count", &engine.credential_count(), &2usize);
     }
 
-    // --- needs_body tests (kill mutants on lines 111-112) ---
+    // --- needs_body tests ---
 
     #[test]
     fn test_needs_body_false_for_header_credentials() {

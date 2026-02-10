@@ -610,7 +610,7 @@ mod tests {
         t.assert_eq("blocked count", &blocked.len(), &0usize);
     }
 
-    // --- Boundary tests for extract_capabilities (kill mutants on lines 47, 65, 69) ---
+    // --- Boundary tests for extract_capabilities ---
 
     #[test]
     fn test_extract_capabilities_short_data() {
@@ -665,7 +665,7 @@ mod tests {
         t.assert_eq("empty caps", &caps.len(), &0usize);
     }
 
-    // --- Boundary tests for extract_push_refs (kill mutants on lines 195, 212) ---
+    // --- Boundary tests for extract_push_refs ---
 
     #[test]
     fn test_extract_push_refs_short_data() {
