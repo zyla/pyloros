@@ -270,6 +270,15 @@ mod tests {
         }
     }
 
+    fn make_sigv4_credential(url: &str) -> Credential {
+        Credential::AwsSigV4 {
+            url: url.to_string(),
+            access_key_id: "AKID".to_string(),
+            secret_access_key: "SECRET".to_string(),
+            session_token: None,
+        }
+    }
+
     #[test]
     fn test_url_pattern_matching() {
         let t = test_report!("Credential matches request with wildcard URL");
@@ -413,5 +422,44 @@ mod tests {
         ])
         .unwrap();
         t.assert_eq("count", &engine.credential_count(), &2usize);
+    }
+
+    // --- needs_body tests (kill mutants on lines 111-112) ---
+
+    #[test]
+    fn test_needs_body_false_for_header_credentials() {
+        let t = test_report!("needs_body returns false when only Header credentials match");
+        let engine = CredentialEngine::new(vec![make_credential(
+            "https://api.example.com/*",
+            "x-api-key",
+            "secret",
+        )])
+        .unwrap();
+        let ri = RequestInfo::http("GET", "https", "api.example.com", None, "/test", None);
+        t.assert_true("needs_body is false", !engine.needs_body(&ri));
+    }
+
+    #[test]
+    fn test_needs_body_true_for_matching_sigv4() {
+        let t = test_report!("needs_body returns true for matching AwsSigV4 credential");
+        let engine =
+            CredentialEngine::new(vec![make_sigv4_credential("https://*.amazonaws.com/*")])
+                .unwrap();
+        let matching_ri = RequestInfo::http(
+            "GET",
+            "https",
+            "s3.amazonaws.com",
+            None,
+            "/bucket/key",
+            None,
+        );
+        t.assert_true("matching sigv4 needs body", engine.needs_body(&matching_ri));
+
+        let non_matching_ri =
+            RequestInfo::http("GET", "https", "api.example.com", None, "/test", None);
+        t.assert_true(
+            "non-matching sigv4 does not need body",
+            !engine.needs_body(&non_matching_ri),
+        );
     }
 }
