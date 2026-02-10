@@ -4,9 +4,14 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
 use rustls::ClientConfig;
+use std::fmt;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
+#[cfg(unix)]
+use tokio::net::UnixListener;
 
 use super::handler::ProxyHandler;
 use super::tunnel::TunnelHandler;
@@ -15,6 +20,44 @@ use crate::error::{Error, Result};
 use crate::filter::{CredentialEngine, FilterEngine};
 use crate::tls::{CertificateAuthority, MitmCertificateGenerator};
 
+/// The address the proxy is listening on after bind().
+pub enum ListenAddress {
+    Tcp(SocketAddr),
+    #[cfg(unix)]
+    Unix(PathBuf),
+}
+
+impl ListenAddress {
+    /// Returns the TCP socket address, panicking if this is a Unix socket.
+    /// Useful in tests that always bind to TCP.
+    pub fn tcp_addr(&self) -> SocketAddr {
+        match self {
+            ListenAddress::Tcp(addr) => *addr,
+            #[cfg(unix)]
+            ListenAddress::Unix(path) => {
+                panic!("expected TCP address, got Unix socket: {}", path.display())
+            }
+        }
+    }
+}
+
+impl fmt::Display for ListenAddress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ListenAddress::Tcp(addr) => write!(f, "{}", addr),
+            #[cfg(unix)]
+            ListenAddress::Unix(path) => write!(f, "{}", path.display()),
+        }
+    }
+}
+
+/// Internal enum wrapping the bound listener.
+enum BoundListener {
+    Tcp(TcpListener),
+    #[cfg(unix)]
+    Unix(UnixListener),
+}
+
 /// The main proxy server
 pub struct ProxyServer {
     config: Config,
@@ -22,7 +65,7 @@ pub struct ProxyServer {
     credential_engine: Arc<CredentialEngine>,
     mitm_generator: Arc<MitmCertificateGenerator>,
     resolved_auth: Option<(String, String)>,
-    listener: Option<TcpListener>,
+    listener: Option<BoundListener>,
     upstream_port_override: Option<u16>,
     upstream_host_override: Option<String>,
     upstream_tls_config: Option<Arc<ClientConfig>>,
@@ -124,16 +167,41 @@ impl ProxyServer {
         self.serve(shutdown).await
     }
 
-    /// Bind the server to its configured address and return the actual socket address.
+    /// Bind the server to its configured address and return the listen address.
     ///
-    /// This is useful when binding to port 0 to discover the assigned port.
+    /// For TCP, this is useful when binding to port 0 to discover the assigned port.
+    /// For Unix sockets, the path from the config is returned.
     /// Call `serve()` afterwards to start accepting connections.
-    pub async fn bind(&mut self) -> Result<SocketAddr> {
-        let addr: SocketAddr = self.config.proxy.bind_address.parse().map_err(|e| {
-            Error::config(format!(
-                "Invalid bind address '{}': {}",
-                self.config.proxy.bind_address, e
-            ))
+    pub async fn bind(&mut self) -> Result<ListenAddress> {
+        let bind_address = &self.config.proxy.bind_address;
+
+        // If the bind address contains '/', treat it as a Unix socket path
+        #[cfg(unix)]
+        if bind_address.contains('/') {
+            let path = PathBuf::from(bind_address);
+
+            // Remove stale socket file if it exists
+            if path.exists() {
+                std::fs::remove_file(&path).map_err(|e| {
+                    Error::proxy(format!(
+                        "Failed to remove stale socket '{}': {}",
+                        path.display(),
+                        e
+                    ))
+                })?;
+            }
+
+            let listener = UnixListener::bind(&path).map_err(|e| {
+                Error::proxy(format!("Failed to bind to {}: {}", path.display(), e))
+            })?;
+
+            self.listener = Some(BoundListener::Unix(listener));
+            return Ok(ListenAddress::Unix(path));
+        }
+
+        // Otherwise parse as TCP address
+        let addr: SocketAddr = bind_address.parse().map_err(|e| {
+            Error::config(format!("Invalid bind address '{}': {}", bind_address, e))
         })?;
 
         let listener = TcpListener::bind(addr)
@@ -144,8 +212,8 @@ impl ProxyServer {
             .local_addr()
             .map_err(|e| Error::proxy(format!("Failed to get local address: {}", e)))?;
 
-        self.listener = Some(listener);
-        Ok(local_addr)
+        self.listener = Some(BoundListener::Tcp(listener));
+        Ok(ListenAddress::Tcp(local_addr))
     }
 
     /// Serve connections using a previously bound listener, with graceful shutdown.
@@ -159,61 +227,88 @@ impl ProxyServer {
 
         let tunnel_handler = Arc::new(self.make_tunnel_handler());
 
-        loop {
-            tokio::select! {
-                _ = &mut shutdown => {
-                    tracing::info!("Shutdown signal received");
-                    return Ok(());
-                }
-                result = listener.accept() => {
-                    let (stream, client_addr) = match result {
-                        Ok(conn) => conn,
-                        Err(e) => {
-                            tracing::error!(error = %e, "Failed to accept connection");
-                            continue;
-                        }
-                    };
-
-                    tracing::debug!(client = %client_addr, "New connection");
-
-                    let tunnel_handler = tunnel_handler.clone();
-                    let filter_engine = self.filter_engine.clone();
-                    let auth = self.resolved_auth.clone();
-                    let log_allowed = self.config.logging.log_allowed_requests;
-                    let log_blocked = self.config.logging.log_blocked_requests;
-
-                    tokio::spawn(async move {
-                        let io = TokioIo::new(stream);
-
-                        let tunnel_handler = tunnel_handler.clone();
-                        let filter_engine = filter_engine.clone();
-                        let auth = auth.clone();
-
-                        let service = service_fn(move |req| {
-                            let handler = ProxyHandler::new(
-                                tunnel_handler.clone(),
-                                filter_engine.clone(),
-                            )
-                            .with_request_logging(log_allowed, log_blocked)
-                            .with_auth(auth.clone());
-                            async move { handler.handle(req).await }
-                        });
-
-                        if let Err(e) = http1::Builder::new()
-                            .preserve_header_case(true)
-                            .title_case_headers(true)
-                            .serve_connection(io, service)
-                            .with_upgrades()
-                            .await
-                        {
-                            if !e.to_string().contains("connection closed") {
-                                tracing::debug!(client = %client_addr, error = %e, "Connection error");
+        match listener {
+            BoundListener::Tcp(tcp_listener) => loop {
+                tokio::select! {
+                    _ = &mut shutdown => {
+                        tracing::info!("Shutdown signal received");
+                        return Ok(());
+                    }
+                    result = tcp_listener.accept() => {
+                        let (stream, client_addr) = match result {
+                            Ok(conn) => conn,
+                            Err(e) => {
+                                tracing::error!(error = %e, "Failed to accept connection");
+                                continue;
                             }
-                        }
-                    });
+                        };
+
+                        tracing::debug!(client = %client_addr, "New connection");
+                        self.spawn_connection(stream, client_addr.to_string(), &tunnel_handler);
+                    }
+                }
+            },
+            #[cfg(unix)]
+            BoundListener::Unix(unix_listener) => loop {
+                tokio::select! {
+                    _ = &mut shutdown => {
+                        tracing::info!("Shutdown signal received");
+                        return Ok(());
+                    }
+                    result = unix_listener.accept() => {
+                        let (stream, _addr) = match result {
+                            Ok(conn) => conn,
+                            Err(e) => {
+                                tracing::error!(error = %e, "Failed to accept connection");
+                                continue;
+                            }
+                        };
+
+                        tracing::debug!(client = "unix", "New connection");
+                        self.spawn_connection(stream, "unix".to_string(), &tunnel_handler);
+                    }
+                }
+            },
+        }
+    }
+
+    /// Spawn a task to handle a single connection.
+    fn spawn_connection<S>(
+        &self,
+        stream: S,
+        client_addr: String,
+        tunnel_handler: &Arc<TunnelHandler>,
+    ) where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        let tunnel_handler = tunnel_handler.clone();
+        let filter_engine = self.filter_engine.clone();
+        let auth = self.resolved_auth.clone();
+        let log_allowed = self.config.logging.log_allowed_requests;
+        let log_blocked = self.config.logging.log_blocked_requests;
+
+        tokio::spawn(async move {
+            let io = TokioIo::new(stream);
+
+            let service = service_fn(move |req| {
+                let handler = ProxyHandler::new(tunnel_handler.clone(), filter_engine.clone())
+                    .with_request_logging(log_allowed, log_blocked)
+                    .with_auth(auth.clone());
+                async move { handler.handle(req).await }
+            });
+
+            if let Err(e) = http1::Builder::new()
+                .preserve_header_case(true)
+                .title_case_headers(true)
+                .serve_connection(io, service)
+                .with_upgrades()
+                .await
+            {
+                if !e.to_string().contains("connection closed") {
+                    tracing::debug!(client = %client_addr, error = %e, "Connection error");
                 }
             }
-        }
+        });
     }
 
     fn make_tunnel_handler(&self) -> TunnelHandler {

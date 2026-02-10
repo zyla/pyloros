@@ -36,7 +36,7 @@ async fn test_log_blocked_only() {
         .with_upstream_port_override(upstream.port())
         .with_upstream_tls(client_tls);
 
-    let addr = server.bind().await.unwrap();
+    let addr = server.bind().await.unwrap().tcp_addr();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
         let _ = server.serve(shutdown_rx).await;
@@ -91,7 +91,7 @@ async fn test_log_allowed_only() {
         .with_upstream_port_override(upstream.port())
         .with_upstream_tls(client_tls);
 
-    let addr = server.bind().await.unwrap();
+    let addr = server.bind().await.unwrap().tcp_addr();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
         let _ = server.serve(shutdown_rx).await;

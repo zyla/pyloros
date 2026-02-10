@@ -471,7 +471,7 @@ impl TestProxy {
             server = server.with_upstream_host_override(host);
         }
 
-        let addr = server.bind().await.unwrap();
+        let addr = server.bind().await.unwrap().tcp_addr();
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
 
         tokio::spawn(async move {

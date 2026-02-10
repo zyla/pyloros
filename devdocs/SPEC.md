@@ -177,9 +177,15 @@ Re-signs requests with real AWS credentials using AWS Signature Version 4. This 
 
 ## Configuration Format
 
+The `bind_address` field accepts either a TCP socket address (`host:port`) or a Unix domain socket
+path (any value containing `/`). When a Unix path is given, the proxy removes any stale socket file
+before binding. This enables communication via bind-mounted Unix sockets in sandboxed environments
+(see Bubblewrap Sandbox below).
+
 ```toml
 [proxy]
-bind_address = "127.0.0.1:8080"
+bind_address = "127.0.0.1:8080"   # TCP (default)
+# bind_address = "/tmp/pyloros.sock" # Unix domain socket
 ca_cert = "/path/to/ca.crt"
 ca_key = "/path/to/ca.key"
 # Optional: require proxy authentication (both fields required if either is set)
@@ -332,6 +338,28 @@ behavior and network isolation.
 
 When proxy authentication is enabled, the compose file passes the proxy secret to the workload
 container via Docker Compose environment variables or secrets.
+
+### Bubblewrap Sandbox
+
+A shell script (`scripts/pyloros-bwrap.sh`) provides a lightweight alternative to Docker for running
+commands with network isolation on Linux. It uses `bwrap` (bubblewrap) with `--unshare-net` to cut
+off all network access, communicating with the proxy via a Unix domain socket bind-mounted into the
+namespace. Inside the sandbox, `socat` bridges a local TCP port to the Unix socket so that standard
+`HTTP_PROXY`/`HTTPS_PROXY` environment variables work with unmodified clients.
+
+Architecture:
+```
+Host:  pyloros proxy ── listens on /tmp/pyloros-bwrap.XXXX/proxy.sock
+                                          │ (bind-mounted)
+bwrap:  socat TCP-LISTEN:8080 ── UNIX-CONNECT:/run/pyloros-proxy.sock
+         ↑
+        sandboxed command (HTTP_PROXY=http://127.0.0.1:8080)
+```
+
+The script handles: prerequisite checks (`bwrap`, `socat`, pyloros binary), temp directory and
+socket lifecycle, proxy startup/shutdown, CA cert mounting, environment variable injection, and
+cleanup on exit. A companion test script (`scripts/test-bwrap.sh`) verifies allowed/blocked behavior
+and network isolation, following the same pattern as the Docker Compose tests.
 
 ## Documentation
 

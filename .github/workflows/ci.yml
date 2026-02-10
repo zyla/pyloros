@@ -83,6 +83,10 @@ jobs:
           CC_x86_64_unknown_linux_musl: musl-gcc
       - name: Run Docker Compose tests
         run: scripts/test-docker-compose.sh
+      - name: Install bwrap and socat
+        run: sudo apt-get install -y bubblewrap socat
+      - name: Run bwrap sandbox tests
+        run: scripts/test-bwrap.sh
 
   coverage:
     name: Coverage
