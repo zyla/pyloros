@@ -15,6 +15,7 @@ use tokio::net::UnixListener;
 
 use super::handler::ProxyHandler;
 use super::tunnel::TunnelHandler;
+use crate::audit::AuditLogger;
 use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::filter::{CredentialEngine, FilterEngine};
@@ -65,6 +66,7 @@ pub struct ProxyServer {
     credential_engine: Arc<CredentialEngine>,
     mitm_generator: Arc<MitmCertificateGenerator>,
     resolved_auth: Option<(String, String)>,
+    audit_logger: Option<Arc<AuditLogger>>,
     listener: Option<BoundListener>,
     upstream_port_override: Option<u16>,
     upstream_host_override: Option<String>,
@@ -111,6 +113,7 @@ impl ProxyServer {
             credential_engine,
             mitm_generator,
             resolved_auth,
+            audit_logger: None,
             listener: None,
             upstream_port_override: None,
             upstream_host_override: None,
@@ -131,6 +134,7 @@ impl ProxyServer {
             credential_engine,
             mitm_generator,
             resolved_auth: None,
+            audit_logger: None,
             listener: None,
             upstream_port_override: None,
             upstream_host_override: None,
@@ -148,6 +152,12 @@ impl ProxyServer {
     /// The original hostname is still used for TLS SNI.
     pub fn with_upstream_host_override(mut self, host: String) -> Self {
         self.upstream_host_override = Some(host);
+        self
+    }
+
+    /// Set the audit logger for structured request logging.
+    pub fn with_audit_logger(mut self, logger: Arc<AuditLogger>) -> Self {
+        self.audit_logger = Some(logger);
         self
     }
 
@@ -286,6 +296,7 @@ impl ProxyServer {
         let auth = self.resolved_auth.clone();
         let log_allowed = self.config.logging.log_allowed_requests;
         let log_blocked = self.config.logging.log_blocked_requests;
+        let audit_logger = self.audit_logger.clone();
 
         tokio::spawn(async move {
             let io = TokioIo::new(stream);
@@ -293,7 +304,8 @@ impl ProxyServer {
             let service = service_fn(move |req| {
                 let handler = ProxyHandler::new(tunnel_handler.clone(), filter_engine.clone())
                     .with_request_logging(log_allowed, log_blocked)
-                    .with_auth(auth.clone());
+                    .with_auth(auth.clone())
+                    .with_audit_logger(audit_logger.clone());
                 async move { handler.handle(req).await }
             });
 
@@ -329,6 +341,9 @@ impl ProxyServer {
         }
         if let Some(ref config) = self.upstream_tls_config {
             handler = handler.with_upstream_tls(config.clone());
+        }
+        if let Some(ref logger) = self.audit_logger {
+            handler = handler.with_audit_logger(logger.clone());
         }
         handler
     }

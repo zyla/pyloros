@@ -175,6 +175,9 @@ pub struct LoggingConfig {
 
     /// Whether to log blocked requests
     pub log_blocked_requests: bool,
+
+    /// Optional path to structured JSONL audit log file
+    pub audit_log: Option<String>,
 }
 
 impl Default for LoggingConfig {
@@ -183,6 +186,7 @@ impl Default for LoggingConfig {
             level: "info".to_string(),
             log_allowed_requests: true,
             log_blocked_requests: true,
+            audit_log: None,
         }
     }
 }
@@ -211,6 +215,8 @@ struct LoggingConfigRaw {
     level: String,
     #[serde(default)]
     log_requests: Option<LogRequestsValue>,
+    #[serde(default)]
+    audit_log: Option<String>,
 }
 
 fn default_log_level() -> String {
@@ -232,6 +238,7 @@ impl<'de> Deserialize<'de> for LoggingConfig {
             level: raw.level,
             log_allowed_requests: log_allowed,
             log_blocked_requests: log_blocked,
+            audit_log: raw.audit_log,
         })
     }
 }
@@ -1004,6 +1011,29 @@ secret_access_key = "SECRET"
         let t = test_report!("Plain literal with no placeholders passes through");
         let result = resolve_credential_value("just-a-literal").unwrap();
         t.assert_eq("passthrough", &result.as_str(), &"just-a-literal");
+    }
+
+    #[test]
+    fn test_audit_log_config() {
+        let t = test_report!("Parse config with audit_log path");
+        let toml = r#"
+[logging]
+level = "info"
+audit_log = "/var/log/pyloros/audit.jsonl"
+"#;
+        let config = Config::parse(toml).unwrap();
+        t.assert_eq(
+            "audit_log",
+            &config.logging.audit_log,
+            &Some("/var/log/pyloros/audit.jsonl".to_string()),
+        );
+    }
+
+    #[test]
+    fn test_audit_log_defaults_to_none() {
+        let t = test_report!("Omitted audit_log defaults to None");
+        let config = Config::parse("").unwrap();
+        t.assert_eq("audit_log", &config.logging.audit_log, &None::<String>);
     }
 
     // --- Proxy auth config tests ---

@@ -446,6 +446,7 @@ impl TestProxy {
         upstream_port: u16,
         upstream_host: Option<String>,
         auth: Option<(String, String)>,
+        audit_log: Option<String>,
     ) -> Self {
         let mut config = Config::minimal(
             "127.0.0.1:0".to_string(),
@@ -469,6 +470,10 @@ impl TestProxy {
             .with_upstream_tls(client_tls);
         if let Some(host) = upstream_host {
             server = server.with_upstream_host_override(host);
+        }
+        if let Some(ref path) = audit_log {
+            let logger = pyloros::AuditLogger::open(path).unwrap();
+            server = server.with_audit_logger(Arc::new(logger));
         }
 
         let addr = server.bind().await.unwrap().tcp_addr();
@@ -502,6 +507,7 @@ impl TestProxy {
             credentials: Vec::new(),
             upstream_host: None,
             auth: None,
+            audit_log: None,
             report: None,
         }
     }
@@ -514,6 +520,7 @@ pub struct TestProxyBuilder<'a> {
     credentials: Vec<pyloros::config::Credential>,
     upstream_host: Option<String>,
     auth: Option<(String, String)>,
+    audit_log: Option<String>,
     report: Option<&'a TestReport>,
 }
 
@@ -530,6 +537,11 @@ impl<'a> TestProxyBuilder<'a> {
 
     pub fn auth(mut self, username: &str, password: &str) -> Self {
         self.auth = Some((username.to_string(), password.to_string()));
+        self
+    }
+
+    pub fn audit_log(mut self, path: &str) -> Self {
+        self.audit_log = Some(path.to_string());
         self
     }
 
@@ -579,6 +591,7 @@ impl<'a> TestProxyBuilder<'a> {
             self.upstream_port,
             self.upstream_host,
             self.auth,
+            self.audit_log,
         )
         .await
     }
@@ -1325,4 +1338,18 @@ pub fn create_test_repo_with_lfs(
     );
 
     (repos_dir, store)
+}
+
+// ---------------------------------------------------------------------------
+// Audit log helpers
+// ---------------------------------------------------------------------------
+
+/// Read a JSONL audit log file and parse each line into a serde_json::Value.
+pub fn read_audit_entries(path: &str) -> Vec<serde_json::Value> {
+    let content = std::fs::read_to_string(path).unwrap_or_default();
+    content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("invalid JSON in audit log"))
+        .collect()
 }
