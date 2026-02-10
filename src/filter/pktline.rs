@@ -610,6 +610,102 @@ mod tests {
         t.assert_eq("blocked count", &blocked.len(), &0usize);
     }
 
+    // --- Boundary tests for extract_capabilities (kill mutants on lines 47, 65, 69) ---
+
+    #[test]
+    fn test_extract_capabilities_short_data() {
+        let t = test_report!("extract_capabilities with 0-3 bytes returns empty");
+        t.assert_eq("0 bytes", &extract_capabilities(b"").len(), &0usize);
+        t.assert_eq("1 byte", &extract_capabilities(b"0").len(), &0usize);
+        t.assert_eq("2 bytes", &extract_capabilities(b"00").len(), &0usize);
+        t.assert_eq("3 bytes", &extract_capabilities(b"000").len(), &0usize);
+    }
+
+    #[test]
+    fn test_extract_capabilities_pktlen_too_small() {
+        let t = test_report!("extract_capabilities with pkt_len < 4 returns empty");
+        // "0003" means pkt_len=3, which is below minimum 4
+        let caps = extract_capabilities(b"0003abc");
+        t.assert_eq("empty caps", &caps.len(), &0usize);
+        // "0001" means pkt_len=1
+        let caps = extract_capabilities(b"0001x");
+        t.assert_eq("pkt_len=1 empty", &caps.len(), &0usize);
+    }
+
+    #[test]
+    fn test_extract_capabilities_pktlen_exceeds_data() {
+        let t = test_report!("extract_capabilities with pkt_len exceeding data returns empty");
+        // "0010" = 16 bytes, but only 8 bytes of data after length prefix
+        let caps = extract_capabilities(b"0010abcd");
+        t.assert_eq("empty caps", &caps.len(), &0usize);
+    }
+
+    #[test]
+    fn test_extract_capabilities_exact_fit() {
+        let t = test_report!("extract_capabilities parses packet that fills buffer exactly");
+        let old = "0000000000000000000000000000000000000000";
+        let new = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        // Build a single pkt-line with capabilities, NO trailing flush
+        let content = format!(
+            "{} {} refs/heads/main\0report-status side-band-64k\n",
+            old, new
+        );
+        let data = format!("{:04x}{}", content.len() + 4, content);
+        let caps = extract_capabilities(data.as_bytes());
+        t.assert_true("has report-status", caps.contains("report-status"));
+        t.assert_true("has side-band-64k", caps.contains("side-band-64k"));
+        t.assert_eq("cap count", &caps.len(), &2usize);
+    }
+
+    #[test]
+    fn test_extract_capabilities_minimal_packet() {
+        let t = test_report!("extract_capabilities with pkt_len=4 (empty content) returns empty");
+        // "0004" means pkt_len=4, content is empty (just length prefix)
+        let caps = extract_capabilities(b"0004");
+        t.assert_eq("empty caps", &caps.len(), &0usize);
+    }
+
+    // --- Boundary tests for extract_push_refs (kill mutants on lines 195, 212) ---
+
+    #[test]
+    fn test_extract_push_refs_short_data() {
+        let t = test_report!("extract_push_refs with 0-3 bytes returns empty");
+        t.assert_eq("0 bytes", &extract_push_refs(b"").len(), &0usize);
+        t.assert_eq("1 byte", &extract_push_refs(b"0").len(), &0usize);
+        t.assert_eq("2 bytes", &extract_push_refs(b"00").len(), &0usize);
+        t.assert_eq("3 bytes", &extract_push_refs(b"000").len(), &0usize);
+    }
+
+    #[test]
+    fn test_extract_push_refs_pktlen_too_small() {
+        let t = test_report!("extract_push_refs with pkt_len < 4 returns empty");
+        // "0003" means pkt_len=3
+        let refs = extract_push_refs(b"0003abc");
+        t.assert_eq("empty refs", &refs.len(), &0usize);
+    }
+
+    #[test]
+    fn test_extract_push_refs_pktlen_exceeds_data() {
+        let t = test_report!("extract_push_refs with pkt_len exceeding data returns empty");
+        // "0020" = 32 bytes, but only 8 bytes total
+        let refs = extract_push_refs(b"0020abcd");
+        t.assert_eq("empty refs", &refs.len(), &0usize);
+    }
+
+    #[test]
+    fn test_extract_push_refs_exact_fit_no_flush() {
+        let t =
+            test_report!("extract_push_refs parses packet that fills buffer exactly (no flush)");
+        let old = "0000000000000000000000000000000000000000";
+        let new = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        // Build a single pkt-line without trailing flush
+        let content = format!("{} {} refs/heads/main\n", old, new);
+        let data = format!("{:04x}{}", content.len() + 4, content);
+        let refs = extract_push_refs(data.as_bytes());
+        t.assert_eq("ref count", &refs.len(), &1usize);
+        t.assert_eq("ref name", &refs[0].as_str(), &"refs/heads/main");
+    }
+
     // --- Tests for format_pktline ---
 
     #[test]
