@@ -284,6 +284,7 @@ secret_access_key = "${AWS_SECRET_ACCESS_KEY}"
 - Tests run in GitHub Actions; coverage is reported
 - When testing integration with external tools (git, curl, claude CLI, etc.), always verify that traffic actually went through the proxy — don't just check that the tool succeeded. Record requests at the upstream handler or check proxy logs for expected entries.
 - When testing that an activity is blocked, don't only verify that the standard tool (e.g., `git push`) fails — also verify that individual protocol requests are independently blocked, since an attacker may craft requests directly, skipping discovery/negotiation steps.
+- For functions with guard clauses or validation checks, test at the exact boundaries — not just "valid input" and "clearly invalid input". A test that only sends well-formed data and completely empty data leaves all the boundary logic untested.
 
 See `INTERNALS.md` for implementation details (E2E test architecture, port override mechanism).
 
@@ -309,7 +310,12 @@ Binary-level tests that send real requests to external APIs (e.g. `api.anthropic
 
 Mutation testing with `cargo-mutants` validates test suite quality. It is run manually (not in CI) and does not need automation. The goal is to kill all viable mutants for core logic (filtering, header manipulation, protocol handling). Surviving mutants in logging/debug/cosmetic code are acceptable.
 
-When adding new code paths with conditional logic (especially `if`, `match`, `==`/`!=`), ensure tests exercise both branches. Default-port matching, header presence checks, and error classification are common sources of surviving mutants.
+Guidelines for writing mutation-resistant tests:
+
+- **Boundary values for guards**: When code has a numeric/length check (e.g. `len < 4`, `pos + n > data.len()`), test at the exact boundary: one below, exactly at, and one above. Off-by-one mutations (`<` vs `<=`, `>` vs `>=`) should fail at least one test.
+- **Malformed and adversarial input for parsers**: Parsers that handle untrusted input (pkt-line, URL patterns, config) need tests with truncated data, overlong length fields, zero-length payloads, and invalid UTF-8 — not just well-formed happy-path packets.
+- **Assert rejection, not just acceptance**: For every boolean/predicate function, test at least one input that returns `true` and one that returns `false`. For functions that filter or classify, test both matching and non-matching cases.
+- **Non-trivial operand values**: When code does arithmetic on a value that could be >1 (e.g. `+= char.len_utf8()`), include a test where the value is >1 (e.g. multi-byte UTF-8) so that `+=` vs `*=` mutations produce different results.
 
 ### Git Smart HTTP Tests
 
