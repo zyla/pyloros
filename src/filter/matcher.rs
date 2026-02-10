@@ -350,6 +350,11 @@ mod tests {
                 m2.matches("start🎉middle🎉end"),
             );
             t.assert_true("multi-byte no match", !m2.matches("start_café_enx"));
+
+            // Non-matching pattern where the last char is multi-byte —
+            // exercises the post-loop position advancement past a multi-byte char
+            let m3 = PatternMatcher::new("*z").unwrap();
+            t.assert_true("no match ending in multibyte", !m3.matches("aé"));
         }
 
         #[test]
