@@ -136,6 +136,58 @@ acceptable just because git smart HTTP access is allowed.
 HTTPS body inspection. On plain HTTP, it is blocked with HTTP 451 (default-deny for
 unverifiable restrictions).
 
+## Config Live-Reload
+
+The proxy watches its config file for changes using the `notify` crate (inotify on
+Linux, kqueue on macOS) and reloads when the file is modified. SIGHUP is also
+supported on Unix.
+
+### Architecture
+
+`serve(mut self, ...)` owns all `ProxyServer` fields. A `tokio::sync::mpsc` channel
+carries reload triggers from three sources:
+
+1. **File watcher** — a background `std::thread` runs `notify::recommended_watcher`
+   on the config file's parent directory, filtering by filename and debouncing at
+   200ms. Watching the parent (not the file) handles editor write-to-tmp + rename
+   patterns that change the file's inode.
+2. **SIGHUP handler** (Unix) — a `tokio::spawn`ed task listens for `SIGHUP` signals.
+3. **Explicit channel** (tests) — `reload_trigger()` returns a `Sender<()>` that
+   tests use to trigger deterministic reloads.
+
+All three send `()` to the same channel. The accept loop receives via
+`tokio::select!` alongside shutdown and accept branches.
+
+### What gets reloaded
+
+On reload, `apply_reload()` re-reads the config file from disk and:
+
+- Compiles a new `FilterEngine` and `CredentialEngine`
+- Re-resolves `auth_username` / `auth_password` (including `${ENV_VAR}` expansion)
+- Reopens the audit logger if the path changed
+- Replaces `self.config` and rebuilds `tunnel_handler`
+
+Non-reloadable fields (`bind_address`, `ca_cert`, `ca_key`) are compared against
+the running config; changes log a warning but are not applied.
+
+If any step fails (bad TOML, rule compilation error, missing env var), the entire
+reload is aborted and the proxy continues with the previous valid config.
+
+### Connection isolation
+
+Existing connections are unaffected by reloads. `spawn_connection()` clones the
+current `Arc<FilterEngine>`, `Arc<TunnelHandler>`, etc. at connection time. After
+a reload, only new connections see the updated config. This is the same isolation
+model used for all shared state in the proxy.
+
+### Test infrastructure
+
+`ReloadableProxy` (in `tests/config_reload_test.rs`) wraps `ProxyServer` with a
+temp config file, explicit reload trigger, and `Notify`-based completion signal.
+Tests write a new config, send on the trigger, and `await` the `Notify` to ensure
+the reload is fully applied before making assertions. A new `reqwest::Client` must
+be created after reload because reqwest pools CONNECT tunnels.
+
 ## Docker Image
 
 ### Alpine over scratch
