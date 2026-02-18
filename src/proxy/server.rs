@@ -71,6 +71,14 @@ pub struct ProxyServer {
     upstream_port_override: Option<u16>,
     upstream_host_override: Option<String>,
     upstream_tls_config: Option<Arc<ClientConfig>>,
+    /// Path to the config file for live-reload.
+    config_path: Option<PathBuf>,
+    /// Sender for the reload channel (kept alive so recv() blocks).
+    reload_tx: Option<tokio::sync::mpsc::Sender<()>>,
+    /// Receiver for the reload channel.
+    reload_rx: Option<tokio::sync::mpsc::Receiver<()>>,
+    /// Notified after each completed reload attempt (success or failure).
+    reload_complete: Arc<tokio::sync::Notify>,
 }
 
 impl ProxyServer {
@@ -118,6 +126,10 @@ impl ProxyServer {
             upstream_port_override: None,
             upstream_host_override: None,
             upstream_tls_config: None,
+            config_path: None,
+            reload_tx: None,
+            reload_rx: None,
+            reload_complete: Arc::new(tokio::sync::Notify::new()),
         })
     }
 
@@ -139,6 +151,10 @@ impl ProxyServer {
             upstream_port_override: None,
             upstream_host_override: None,
             upstream_tls_config: None,
+            config_path: None,
+            reload_tx: None,
+            reload_rx: None,
+            reload_complete: Arc::new(tokio::sync::Notify::new()),
         }
     }
 
@@ -165,6 +181,29 @@ impl ProxyServer {
     pub fn with_upstream_tls(mut self, config: Arc<ClientConfig>) -> Self {
         self.upstream_tls_config = Some(config);
         self
+    }
+
+    /// Set the config file path for live-reload support.
+    /// When set, the server watches the file for changes and reloads on modification.
+    pub fn with_config_path(mut self, path: PathBuf) -> Self {
+        self.config_path = Some(path);
+        self
+    }
+
+    /// Get a sender that triggers a config reload when a message is sent.
+    /// For testing: send `()` to trigger a reload, then await `reload_complete_notify()`.
+    pub fn reload_trigger(&mut self) -> tokio::sync::mpsc::Sender<()> {
+        if self.reload_tx.is_none() {
+            let (tx, rx) = tokio::sync::mpsc::channel(1);
+            self.reload_tx = Some(tx);
+            self.reload_rx = Some(rx);
+        }
+        self.reload_tx.as_ref().unwrap().clone()
+    }
+
+    /// Get a Notify that is signaled after each reload attempt completes.
+    pub fn reload_complete_notify(&self) -> Arc<tokio::sync::Notify> {
+        self.reload_complete.clone()
     }
 
     /// Run the proxy server with graceful shutdown
@@ -235,7 +274,26 @@ impl ProxyServer {
             .take()
             .expect("must call bind() before serve()");
 
-        let tunnel_handler = Arc::new(self.make_tunnel_handler());
+        let mut tunnel_handler = Arc::new(self.make_tunnel_handler());
+
+        // Set up reload channel. We always create one so the select! branch blocks.
+        // If an external trigger was set up via reload_trigger(), use that channel.
+        // Otherwise create a fresh one.
+        let (reload_tx, mut reload_rx) = if let Some(rx) = self.reload_rx.take() {
+            (self.reload_tx.take().unwrap(), rx)
+        } else {
+            tokio::sync::mpsc::channel(1)
+        };
+
+        // Spawn file watcher and SIGHUP handler if config_path is set
+        if let Some(ref config_path) = self.config_path {
+            spawn_file_watcher(config_path.clone(), reload_tx.clone());
+            #[cfg(unix)]
+            spawn_sighup_handler(reload_tx.clone());
+        }
+
+        // Keep one sender alive so recv() blocks (never returns None)
+        let _reload_tx_keepalive = reload_tx;
 
         match listener {
             BoundListener::Tcp(tcp_listener) => loop {
@@ -243,6 +301,9 @@ impl ProxyServer {
                     _ = &mut shutdown => {
                         tracing::info!("Shutdown signal received");
                         return Ok(());
+                    }
+                    Some(()) = reload_rx.recv() => {
+                        self.apply_reload(&mut tunnel_handler);
                     }
                     result = tcp_listener.accept() => {
                         let (stream, client_addr) = match result {
@@ -265,6 +326,9 @@ impl ProxyServer {
                         tracing::info!("Shutdown signal received");
                         return Ok(());
                     }
+                    Some(()) = reload_rx.recv() => {
+                        self.apply_reload(&mut tunnel_handler);
+                    }
                     result = unix_listener.accept() => {
                         let (stream, _addr) = match result {
                             Ok(conn) => conn,
@@ -280,6 +344,109 @@ impl ProxyServer {
                 }
             },
         }
+    }
+
+    /// Apply a config reload from the config file on disk.
+    fn apply_reload(&mut self, tunnel_handler: &mut Arc<TunnelHandler>) {
+        let config_path = match &self.config_path {
+            Some(p) => p.clone(),
+            None => return,
+        };
+
+        // Read and parse config
+        let new_config = match Config::from_file(&config_path) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                tracing::error!(error = %e, "Config reload failed: invalid config file");
+                self.reload_complete.notify_waiters();
+                return;
+            }
+        };
+
+        // Warn on non-reloadable field changes
+        if new_config.proxy.bind_address != self.config.proxy.bind_address {
+            tracing::warn!(
+                old = %self.config.proxy.bind_address,
+                new = %new_config.proxy.bind_address,
+                "bind_address changed but requires restart to take effect"
+            );
+        }
+        if new_config.proxy.ca_cert != self.config.proxy.ca_cert {
+            tracing::warn!("ca_cert changed but requires restart to take effect");
+        }
+        if new_config.proxy.ca_key != self.config.proxy.ca_key {
+            tracing::warn!("ca_key changed but requires restart to take effect");
+        }
+
+        // Compile new filter engine
+        let new_filter = match FilterEngine::new(new_config.rules.clone()) {
+            Ok(f) => Arc::new(f),
+            Err(e) => {
+                tracing::error!(error = %e, "Config reload failed: rule compilation error");
+                self.reload_complete.notify_waiters();
+                return;
+            }
+        };
+
+        // Compile new credential engine
+        let new_creds = match CredentialEngine::new(new_config.credentials.clone()) {
+            Ok(c) => Arc::new(c),
+            Err(e) => {
+                tracing::error!(error = %e, "Config reload failed: credential compilation error");
+                self.reload_complete.notify_waiters();
+                return;
+            }
+        };
+
+        // Re-resolve auth credentials
+        let new_auth = match new_config.resolved_auth() {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::error!(error = %e, "Config reload failed: auth resolution error");
+                self.reload_complete.notify_waiters();
+                return;
+            }
+        };
+
+        // Update audit logger if path changed
+        if new_config.logging.audit_log != self.config.logging.audit_log {
+            match &new_config.logging.audit_log {
+                Some(path) => match AuditLogger::open(path) {
+                    Ok(logger) => {
+                        tracing::info!(path = %path, "Audit log path updated");
+                        self.audit_logger = Some(Arc::new(logger));
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, path = %path, "Config reload failed: cannot open audit log");
+                        self.reload_complete.notify_waiters();
+                        return;
+                    }
+                },
+                None => {
+                    if self.audit_logger.is_some() {
+                        tracing::info!("Audit log disabled by reload");
+                    }
+                    self.audit_logger = None;
+                }
+            }
+        }
+
+        // Apply all changes
+        self.filter_engine = new_filter;
+        self.credential_engine = new_creds;
+        self.resolved_auth = new_auth;
+        self.config = new_config;
+
+        // Recreate tunnel handler with updated config
+        *tunnel_handler = Arc::new(self.make_tunnel_handler());
+
+        tracing::info!(
+            rules = self.filter_engine.rule_count(),
+            credentials = self.credential_engine.credential_count(),
+            "Config reloaded successfully"
+        );
+
+        self.reload_complete.notify_waiters();
     }
 
     /// Spawn a task to handle a single connection.
@@ -362,4 +529,87 @@ impl ProxyServer {
     pub fn mitm_generator(&self) -> &Arc<MitmCertificateGenerator> {
         &self.mitm_generator
     }
+}
+
+/// Spawn a background thread that watches a config file for changes and sends
+/// reload triggers with 200ms debouncing.
+fn spawn_file_watcher(config_path: PathBuf, reload_tx: tokio::sync::mpsc::Sender<()>) {
+    std::thread::spawn(move || {
+        use notify::{EventKind, RecursiveMode, Watcher};
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut watcher = match notify::recommended_watcher(tx) {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to create config file watcher");
+                return;
+            }
+        };
+
+        // Watch parent directory to catch editor save patterns (write-to-tmp + rename)
+        let watch_dir = config_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."));
+        if let Err(e) = watcher.watch(watch_dir, RecursiveMode::NonRecursive) {
+            tracing::error!(
+                error = %e,
+                path = %watch_dir.display(),
+                "Failed to watch config directory"
+            );
+            return;
+        }
+
+        tracing::debug!(path = %config_path.display(), "Watching config file for changes");
+
+        let config_filename = config_path.file_name().map(|f| f.to_owned());
+
+        loop {
+            match rx.recv() {
+                Ok(Ok(event)) => {
+                    // Only care about creates and modifications
+                    if !matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_)) {
+                        continue;
+                    }
+
+                    // Check if the event is for our config file
+                    let is_our_file = event
+                        .paths
+                        .iter()
+                        .any(|p| p.file_name() == config_filename.as_deref());
+                    if !is_our_file {
+                        continue;
+                    }
+
+                    // Debounce: drain events for 200ms after detecting a change
+                    let debounce = std::time::Duration::from_millis(200);
+                    while rx.recv_timeout(debounce).is_ok() {}
+
+                    tracing::debug!("Config file change detected, triggering reload");
+                    if reload_tx.blocking_send(()).is_err() {
+                        break; // server shut down
+                    }
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!(error = %e, "Config file watcher error");
+                }
+                Err(_) => break, // watcher dropped
+            }
+        }
+    });
+}
+
+/// Spawn a SIGHUP handler that triggers config reloads.
+#[cfg(unix)]
+fn spawn_sighup_handler(reload_tx: tokio::sync::mpsc::Sender<()>) {
+    tokio::spawn(async move {
+        let mut signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())
+            .expect("failed to install SIGHUP handler");
+        loop {
+            signal.recv().await;
+            tracing::info!("Received SIGHUP, triggering config reload");
+            if reload_tx.send(()).await.is_err() {
+                break;
+            }
+        }
+    });
 }
