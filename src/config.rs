@@ -571,6 +571,17 @@ websocket = true
     }
 
     #[test]
+    fn test_logging_section_without_level_defaults_to_info() {
+        let t = test_report!("Logging section without level key defaults to info");
+        let toml = r#"
+[logging]
+log_requests = true
+"#;
+        let config = Config::parse(toml).unwrap();
+        t.assert_eq("level", &config.logging.level.as_str(), &"info");
+    }
+
+    #[test]
     fn test_logging_config_bool_false() {
         let t = test_report!("log_requests = false disables both");
         let toml = r#"

@@ -188,6 +188,19 @@ Tests write a new config, send on the trigger, and `await` the `Notify` to ensur
 the reload is fully applied before making assertions. A new `reqwest::Client` must
 be created after reload because reqwest pools CONNECT tunnels.
 
+## Upstream TLS Root CAs
+
+By default, the proxy trusts both `webpki-roots` (Mozilla's bundled root CA bundle) and
+native/system root certificates loaded via `rustls-native-certs`. This matches the behavior
+of most Rust HTTP clients (reqwest, etc.) and ensures compatibility with servers whose
+certificate chains use roots present in the OS store but not in the Mozilla bundle.
+
+The `upstream_tls_ca` config option overrides both sources — when set, only the specified
+CA cert is trusted. This is used in tests with self-signed upstream servers.
+
+The Alpine Docker image includes `ca-certificates` so that native cert loading works
+inside containers.
+
 ## Docker Image
 
 ### Alpine over scratch

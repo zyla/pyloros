@@ -20,6 +20,7 @@ tokio-rustls = "0.26"
 rcgen = { version = "0.14", features = ["x509-parser"] }
 time = "0.3"
 webpki-roots = "1.0"
+rustls-native-certs = "0.8"
 toml = "0.9"
 serde = { version = "1", features = ["derive"] }
 tracing = "0.1"

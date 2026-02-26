@@ -217,6 +217,7 @@ Re-signs requests with real AWS credentials using AWS Signature Version 4. This 
 - MITM with CA for HTTPS inspection
 - Tokio async runtime
 - rustls + rcgen for TLS (pure Rust, no OpenSSL) — see `INTERNALS.md` for evaluation
+- Upstream TLS root CAs: `webpki-roots` (Mozilla bundle) + `rustls-native-certs` (OS certificate store). The `upstream_tls_ca` config option overrides both (for testing with self-signed upstreams).
 - TOML config
 - `*` wildcard = multi-segment match
 - HTTP 451 for blocked requests
