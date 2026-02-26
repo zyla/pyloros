@@ -66,14 +66,14 @@ if [[ -z "$BINARY" ]]; then
 fi
 
 # Build local proxy Docker image from the binary using the project Dockerfile
-PROXY_IMAGE="rl-compose-test-proxy:$$"
+PROXY_IMAGE="pyloros-compose-test-proxy:$$"
 echo "Building local proxy image from $BINARY..."
 cp "$BINARY" "$PROJECT_DIR/pyloros"
 docker build -t "$PROXY_IMAGE" -f "$PROJECT_DIR/Dockerfile" "$PROJECT_DIR"
 rm -f "$PROJECT_DIR/pyloros"
 
 # Build test image with curl and git pre-installed
-SANDBOX_IMAGE="rl-compose-test:latest"
+SANDBOX_IMAGE="pyloros-compose-test:latest"
 echo "Building test sandbox image..."
 docker build -t "$SANDBOX_IMAGE" -f - . <<'DOCKERFILE'
 FROM alpine:latest
@@ -87,7 +87,7 @@ echo "Generating CA certificate..."
 "$BINARY" generate-ca --out "$CA_DIR" >/dev/null
 
 # Use a unique project name for isolation
-COMPOSE_PROJECT_NAME="rl-compose-test-$$"
+COMPOSE_PROJECT_NAME="pyloros-compose-test-$$"
 export COMPOSE_PROJECT_NAME PROXY_IMAGE CA_DIR SANDBOX_IMAGE
 
 # Compose helper — runs compose with our file and project name

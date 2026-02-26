@@ -139,7 +139,7 @@ Optional fields are omitted when not applicable.
 The proxy can require clients to authenticate before processing any requests. This prevents unauthorized network entities from using the proxy's credential injection and URL allowlisting capabilities — critical when the proxy is reachable over a network (e.g. Docker internal networks where other containers could connect).
 
 - Authentication uses the HTTP Basic scheme via the `Proxy-Authorization` header (RFC 7235)
-- When enabled, unauthenticated or incorrectly authenticated requests receive HTTP `407 Proxy Authentication Required` with a `Proxy-Authenticate: Basic realm="redlimitador"` header
+- When enabled, unauthenticated or incorrectly authenticated requests receive HTTP `407 Proxy Authentication Required` with a `Proxy-Authenticate: Basic realm="pyloros"` header
 - For CONNECT tunnels, authentication is checked on the CONNECT request before the tunnel is established
 - For plain HTTP proxy requests, authentication is checked on each request
 - Configured via `auth_username` and `auth_password` fields in `[proxy]` — both must be present, or both absent
