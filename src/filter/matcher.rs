@@ -336,6 +336,28 @@ mod tests {
         }
 
         #[test]
+        fn test_wildcard_multibyte_utf8() {
+            let t = test_report!("Wildcard matches with multi-byte UTF-8 characters");
+            let m = PatternMatcher::new("*end").unwrap();
+            t.assert_true("café_end matches", m.matches("café_end"));
+            t.assert_true("日本語end matches", m.matches("日本語end"));
+            t.assert_true("emoji 🎉end matches", m.matches("🎉end"));
+
+            let m2 = PatternMatcher::new("start*end").unwrap();
+            t.assert_true("start_café_end matches", m2.matches("start_café_end"));
+            t.assert_true(
+                "start🎉middle🎉end matches",
+                m2.matches("start🎉middle🎉end"),
+            );
+            t.assert_true("multi-byte no match", !m2.matches("start_café_enx"));
+
+            // Non-matching pattern where the last char is multi-byte —
+            // exercises the post-loop position advancement past a multi-byte char
+            let m3 = PatternMatcher::new("*z").unwrap();
+            t.assert_true("no match ending in multibyte", !m3.matches("aé"));
+        }
+
+        #[test]
         fn test_is_literal() {
             let t = test_report!("is_literal detection");
             t.assert_true(

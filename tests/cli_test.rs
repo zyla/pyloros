@@ -208,6 +208,46 @@ value = "Bearer tok"
     t.assert_not_contains("no bearer in output", &stdout, "Bearer tok");
 }
 
+// ---------- run: CA cert/key validation ----------
+
+#[test]
+fn run_fails_with_only_ca_cert() {
+    let t = test_report!("run fails when --ca-cert is given without --ca-key");
+
+    let dir = TempDir::new().unwrap();
+    let cert_path = dir.path().join("ca.crt");
+    fs::write(&cert_path, "dummy cert").unwrap();
+
+    let output = run_cli_reported(&t, &["run", "--ca-cert", cert_path.to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    t.assert_true("Exit failure", !output.status.success());
+    t.assert_contains(
+        "Error mentions CA",
+        &stderr,
+        "CA certificate and key are required",
+    );
+}
+
+#[test]
+fn run_fails_with_only_ca_key() {
+    let t = test_report!("run fails when --ca-key is given without --ca-cert");
+
+    let dir = TempDir::new().unwrap();
+    let key_path = dir.path().join("ca.key");
+    fs::write(&key_path, "dummy key").unwrap();
+
+    let output = run_cli_reported(&t, &["run", "--ca-key", key_path.to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    t.assert_true("Exit failure", !output.status.success());
+    t.assert_contains(
+        "Error mentions CA",
+        &stderr,
+        "CA certificate and key are required",
+    );
+}
+
 // ---------- generate-ca ----------
 
 #[test]

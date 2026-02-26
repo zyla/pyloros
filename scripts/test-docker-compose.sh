@@ -124,11 +124,11 @@ sandbox_exec() {
 echo ""
 echo "Test 1: Allowed HTTPS request through proxy"
 set +e
-OUTPUT=$(sandbox_exec curl -sf https://example.com/ 2>&1)
+OUTPUT=$(sandbox_exec curl -sf https://httpbin.org/robots.txt 2>&1)
 EXIT_CODE=$?
 set -e
 
-if [[ $EXIT_CODE -eq 0 ]] && echo "$OUTPUT" | grep -q "Example Domain"; then
+if [[ $EXIT_CODE -eq 0 ]] && echo "$OUTPUT" | grep -q "Disallow"; then
     pass "Allowed HTTPS request succeeds and returns expected content"
 else
     fail "Allowed HTTPS request (exit=$EXIT_CODE)"
