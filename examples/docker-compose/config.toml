@@ -8,10 +8,12 @@ bind_address = "0.0.0.0:8080"
 level = "info"
 log_requests = true
 
-# Allow curl to example.com (used by test script)
+# Allow curl to httpbin.org/robots.txt (used by test script)
+# Note: example.com is avoided because its cert chains to a root CA
+# (AAA Certificate Services) that was removed from Alpine's CA bundle.
 [[rules]]
-method = "*"
-url = "https://example.com/*"
+method = "GET"
+url = "https://httpbin.org/robots.txt"
 
 # Allow git clone of a small public repo
 [[rules]]
