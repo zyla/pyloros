@@ -527,6 +527,14 @@ async fn connect_upstream_tls(
         None => {
             let mut root_store = rustls::RootCertStore::empty();
             root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+            // Also load native/system root certificates (e.g. /etc/ssl/certs on Linux)
+            let native = rustls_native_certs::load_native_certs();
+            for error in &native.errors {
+                tracing::warn!(error = %error, "Error loading native root certificates");
+            }
+            for cert in native.certs {
+                let _ = root_store.add(cert);
+            }
             let mut config = ClientConfig::builder()
                 .with_root_certificates(root_store)
                 .with_no_client_auth();

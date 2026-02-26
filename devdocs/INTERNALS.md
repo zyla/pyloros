@@ -136,6 +136,19 @@ acceptable just because git smart HTTP access is allowed.
 HTTPS body inspection. On plain HTTP, it is blocked with HTTP 451 (default-deny for
 unverifiable restrictions).
 
+## Upstream TLS Root CAs
+
+By default, the proxy trusts both `webpki-roots` (Mozilla's bundled root CA bundle) and
+native/system root certificates loaded via `rustls-native-certs`. This matches the behavior
+of most Rust HTTP clients (reqwest, etc.) and ensures compatibility with servers whose
+certificate chains use roots present in the OS store but not in the Mozilla bundle.
+
+The `upstream_tls_ca` config option overrides both sources — when set, only the specified
+CA cert is trusted. This is used in tests with self-signed upstream servers.
+
+The Alpine Docker image includes `ca-certificates` so that native cert loading works
+inside containers.
+
 ## Docker Image
 
 ### Alpine over scratch
