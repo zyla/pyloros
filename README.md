@@ -249,6 +249,62 @@ url = "wss://realtime.example.com/events"
 websocket = true
 ```
 
+### `[[credentials]]`
+
+Credential injection lets the proxy inject API keys and tokens into outgoing requests so the AI agent never sees real secrets — preventing credential exfiltration. Credentials are only injected for HTTPS requests (never plain HTTP).
+
+All string values support `${ENV_VAR}` placeholders, resolved from environment variables at startup.
+
+#### Header credentials (type = "header")
+
+Injects or overwrites a single HTTP header on matching requests. The `type` field defaults to `"header"` if omitted.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `type` | No | `"header"` (default if omitted) |
+| `url` | Yes | URL pattern (same syntax as rules) |
+| `header` | Yes | Header name to inject |
+| `value` | Yes | Header value (supports `${ENV_VAR}`) |
+
+If multiple credentials match the same request and set the same header, last match wins (config file order). Multiple credentials matching different headers on the same request all get injected.
+
+```toml
+# Inject an API key for Anthropic
+[[credentials]]
+url = "https://api.anthropic.com/*"
+header = "x-api-key"
+value = "${ANTHROPIC_API_KEY}"
+
+# Inject a bearer token for a private API
+[[credentials]]
+url = "https://internal.example.com/*"
+header = "Authorization"
+value = "Bearer ${INTERNAL_TOKEN}"
+```
+
+#### AWS SigV4 credentials (type = "aws-sigv4")
+
+Re-signs requests with real AWS credentials using AWS Signature Version 4. The agent can use fake/dummy AWS credentials while the proxy transparently re-signs with real ones.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `type` | Yes | Must be `"aws-sigv4"` |
+| `url` | Yes | URL pattern (same syntax as rules) |
+| `access_key_id` | Yes | AWS access key ID (supports `${ENV_VAR}`) |
+| `secret_access_key` | Yes | AWS secret access key (supports `${ENV_VAR}`) |
+| `session_token` | No | AWS session token for temporary credentials (supports `${ENV_VAR}`) |
+
+The proxy extracts the region and service from the agent's existing `Authorization` header, strips old AWS auth headers, and re-signs with the real credentials. If the original request has no parseable AWS `Authorization` header, the credential is skipped.
+
+```toml
+[[credentials]]
+type = "aws-sigv4"
+url = "https://*.amazonaws.com/*"
+access_key_id = "${AWS_ACCESS_KEY_ID}"
+secret_access_key = "${AWS_SECRET_ACCESS_KEY}"
+# session_token = "${AWS_SESSION_TOKEN}"
+```
+
 ## CLI Reference
 
 ### `run` — Start the proxy server
