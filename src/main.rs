@@ -89,9 +89,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .init();
 
             // Load config
-            let mut cfg = if let Some(config_path) = config {
+            let mut cfg = if let Some(ref config_path) = config {
                 tracing::info!(path = %config_path.display(), "Loading configuration");
-                Config::from_file(&config_path)?
+                Config::from_file(config_path)?
             } else {
                 tracing::info!("Using default configuration");
                 Config::parse("")?
@@ -128,6 +128,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Create and run server
             let mut server = ProxyServer::new(cfg)?;
+
+            // Enable live-reload if config file was provided
+            if let Some(config_path) = config {
+                server = server.with_config_path(config_path);
+            }
 
             if let Some(port) = upstream_override_port {
                 server = server.with_upstream_port_override(port);

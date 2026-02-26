@@ -104,6 +104,30 @@ subcommands:
 - `generate-ca --out ./certs/` — generate CA cert/key
 - `validate-config --config config.toml` — validate config file
 
+### Configuration Live-Reload
+
+When a config file is provided (`--config`), the proxy watches it for changes using OS-native
+file system notifications (inotify on Linux, kqueue on macOS) and automatically reloads on
+modification. On Unix systems, sending `SIGHUP` to the proxy process also triggers a reload.
+
+**Reloadable settings** (take effect for new connections after reload):
+- `[[rules]]` — filter rules
+- `[[credentials]]` — credential injection entries
+- `[proxy]` `auth_username` / `auth_password` — proxy authentication (re-resolves `${ENV_VAR}`)
+- `[logging]` `log_requests` — request logging flags
+- `[logging]` `audit_log` — audit log file path
+
+**Non-reloadable settings** (require restart; changing them logs a warning):
+- `[proxy]` `bind_address`
+- `[proxy]` `ca_cert` / `ca_key`
+
+**Behavior:**
+- Invalid config files are rejected; the proxy continues with the previous valid config
+- Existing connections are not affected; only new connections use the new config
+- File changes are debounced (200ms) to handle editor save patterns (write-to-temp + rename)
+- Successful reloads are logged at info level with rule/credential counts
+- Failed reloads are logged at error level with the parse/compile failure message
+
 ### Logging
 - Configurable log level (error/warn/info/debug/trace)
 - Separate control over logging of allowed and blocked requests (e.g., log only blocked to reduce noise, or only allowed for auditing)
